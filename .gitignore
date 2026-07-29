@@ -1,1 +1,9 @@
 tempdata/
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+bronze to silver.md
+emr/__pycache__/
+gluesilver/__pycache__/
