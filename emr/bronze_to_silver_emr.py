@@ -32,7 +32,7 @@ def parse_arguments():
     parser.add_argument(
         "--bronze-bucket",
         type=str,
-        default="s3://agro-weather-data/bronze",
+        default="s3://agro-weather-data-lake",
         help="S3 URI or local path for Bronze layer weather data"
     )
     parser.add_argument(
@@ -80,16 +80,32 @@ def main():
 
     BRONZE_BUCKET = args.bronze_bucket.rstrip('/')
     SILVER_BUCKET = args.silver_bucket.rstrip('/')
-    CROP_DATA_INPUT_PATH = (args.crop_data_input_path or f"{BRONZE_BUCKET}/crop_data").rstrip('/')
+    CROP_DATA_INPUT_PATH = (args.crop_data_input_path or f"{BRONZE_BUCKET}/crop/Custom_Crops_yield_Historical_Dataset.csv").rstrip('/')
     CROP_DATA_OUTPUT_PATH = (args.crop_data_output_path or f"{SILVER_BUCKET}/crop_data").rstrip('/')
     PERCENTAGE = args.percentage
     MIN_CITIES = args.min_cities
     SEED = args.seed
 
+    # Derive candidate base paths (handles s3://agro-weather-data-lake/bronze vs s3://agro-weather-data-lake without /bronze)
+    bronze_raw = BRONZE_BUCKET
+    bronze_stripped = bronze_raw[:-7] if bronze_raw.endswith('/bronze') else bronze_raw
+
+    BRONZE_BASES = []
+    for b in [bronze_raw, bronze_stripped, bronze_raw.replace('agro-weather-data', 'agro-weather-data-lake') if 'agro-weather-data' in bronze_raw else bronze_raw]:
+        if b and b not in BRONZE_BASES:
+            BRONZE_BASES.append(b)
+
+    for b in list(BRONZE_BASES):
+        if b.endswith('/bronze'):
+            b_strip = b[:-7]
+            if b_strip not in BRONZE_BASES:
+                BRONZE_BASES.append(b_strip)
+
     logger.info("=================================================================")
     logger.info("        STARTING BRONZE TO SILVER EMR TRANSFORMATION JOB         ")
     logger.info("=================================================================")
     logger.info(f"Bronze Bucket Path     : {BRONZE_BUCKET}")
+    logger.info(f"Candidate Bronze Bases : {BRONZE_BASES}")
     logger.info(f"Silver Bucket Path     : {SILVER_BUCKET}")
     logger.info(f"Crop Data Input Path   : {CROP_DATA_INPUT_PATH}")
     logger.info(f"Crop Data Output Path  : {CROP_DATA_OUTPUT_PATH}")
@@ -121,12 +137,21 @@ def main():
     logger.info("[STEP 1/6] READING CITY MASTER & EXECUTING GEOSPATIAL ENRICHMENT")
     logger.info("="*70)
 
-    city_master_paths = [
-        f"{BRONZE_BUCKET}/weather/city_master.parquet",
-        f"{BRONZE_BUCKET}/city_master.parquet",
-        f"{BRONZE_BUCKET}/city_master/",
-        f"{BRONZE_BUCKET}/weather/city_master/"
-    ]
+    city_master_paths = []
+    for base in BRONZE_BASES:
+        city_master_paths.extend([
+            f"{base}/weather/city_master.parquet",
+            f"{base}/weather/city_master",
+            f"{base}/city_master/city_master.parquet",
+            f"{base}/city_master.parquet",
+            f"{base}/city_master",
+            f"{base}/weather/city_master.csv",
+            f"{base}/city_master.csv"
+        ])
+
+    seen_cm = set()
+    city_master_paths = [p for p in city_master_paths if not (p in seen_cm or seen_cm.add(p))]
+
     city_master_df = None
     for cm_path in city_master_paths:
         try:
@@ -135,10 +160,16 @@ def main():
             logger.info(f"Parquet read completed successfully from: {cm_path}")
             break
         except Exception as e:
-            logger.warning(f"Path candidate failed ({cm_path}): {e}")
+            logger.warning(f"Parquet read failed ({cm_path}): {e}")
+            try:
+                city_master_df = spark.read.option("header", "true").option("inferSchema", "true").csv(cm_path)
+                logger.info(f"CSV read completed successfully from: {cm_path}")
+                break
+            except Exception as csv_err:
+                logger.warning(f"CSV read failed ({cm_path}): {csv_err}")
 
     if city_master_df is None:
-        raise FileNotFoundError(f"Could not read city_master parquet from any candidate path in {BRONZE_BUCKET}")
+        raise FileNotFoundError(f"Could not read city_master dataset from any candidate path in {BRONZE_BASES}")
 
     try:
         raw_cm_count = city_master_df.count()
@@ -161,25 +192,39 @@ def main():
 
         logger.info("GeoPandas detected. Loading district boundaries from S3...")
 
-        geojson_s3_path = f"{BRONZE_BUCKET}/district_geojson/india_district.geojson"
+        geojson_s3_paths = []
+        for base in BRONZE_BASES:
+            geojson_s3_paths.extend([
+                f"{base}/geojson/india_district.geojson",
+                f"{base}/geojson/india_district.json",
+                f"{base}/district_geojson/india_district.geojson",
+                f"{base}/india_district.geojson"
+            ])
+        seen_gj = set()
+        geojson_s3_paths = [p for p in geojson_s3_paths if not (p in seen_gj or seen_gj.add(p))]
+
         geojson_local_path = "/tmp/india_district.geojson"
+        gdf_districts = None
+        for gj_path in geojson_s3_paths:
+            try:
+                logger.info(f"Attempting to copy GeoJSON from S3: {gj_path}")
+                subprocess.run(
+                    ["aws", "s3", "cp", gj_path, geojson_local_path],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                logger.info(f"GeoJSON copied successfully to {geojson_local_path}")
+                gdf_districts = gpd.read_file(geojson_local_path)
+                break
+            except Exception:
+                continue
 
-        logger.info(f"Copying GeoJSON from S3: {geojson_s3_path}")
+        if gdf_districts is None:
+            logger.warning("S3 GeoJSON load failed. Falling back to GitHub raw GeoJSON URL...")
+            url = "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson"
+            gdf_districts = gpd.read_file(url)
 
-        subprocess.run(
-            [
-                "aws",
-                "s3",
-                "cp",
-                geojson_s3_path,
-                geojson_local_path
-            ],
-            check=True
-        )
-
-        logger.info(f"GeoJSON copied successfully to {geojson_local_path}")
-
-        gdf_districts = gpd.read_file(geojson_local_path)
         logger.info(f"Successfully loaded {len(gdf_districts)} district polygons.")
 
         geometry = gpd.points_from_xy(cm_pd["lng"], cm_pd["lat"], crs="EPSG:4326")
@@ -260,17 +305,20 @@ def main():
     cm_pd["region"] = cm_pd["state"].map(region_map).fillna("Other")
 
     raw_city_count = len(cm_pd)
-    master_lookup_pd = cm_pd.drop_duplicates(subset=["city"], keep="first").copy()
+    if "state" in cm_pd.columns and cm_pd["state"].notnull().any():
+        master_lookup_pd = cm_pd.drop_duplicates(subset=["city", "state"], keep="first").copy()
+    else:
+        master_lookup_pd = cm_pd.drop_duplicates(subset=["city"], keep="first").copy()
+
     output_city_count = len(master_lookup_pd)
-    distinct_city_count = master_lookup_pd["city"].nunique()
-    duplicated_city_count = output_city_count - distinct_city_count
+    distinct_city_count = len(master_lookup_pd)
+    duplicated_city_count = raw_city_count - output_city_count
 
     logger.info("="*50)
     logger.info("GEOSPATIAL ENRICHMENT AUDIT & VALIDATION:")
-    logger.info(f"  Input city count:            {raw_city_count}")
-    logger.info(f"  Output city count:           {output_city_count}")
-    logger.info(f"  Distinct city count:         {distinct_city_count}")
-    logger.info(f"  Duplicated city records:     {duplicated_city_count}")
+    logger.info(f"  Input city records:          {raw_city_count}")
+    logger.info(f"  Composite unique entities:   {output_city_count}")
+    logger.info(f"  Duplicated/Redundant dropped:{duplicated_city_count}")
     logger.info("="*50)
 
     if duplicated_city_count > 0:
@@ -288,32 +336,35 @@ def main():
     try:
         w_region = Window.partitionBy().orderBy("region_name")
         dim_region = (
-            master_lookup_df.select("region").distinct()
-            .filter(F.col("region").isNotNull())
-            .withColumnRenamed("region", "region_name")
+            master_lookup_df.select(F.col("region").alias("region_name")).distinct()
+            .filter(F.col("region_name").isNotNull())
             .withColumn("region_id", F.row_number().over(w_region))
             .select("region_id", "region_name")
         )
 
-        w_state = Window.partitionBy().orderBy("state")
-        dim_state = (
-            master_lookup_df.select("state", "region")
-            .filter(F.col("state").isNotNull())
-            .groupBy("state")
-            .agg(F.first("region").alias("region_name_tmp"))
-            .join(F.broadcast(dim_region), F.col("region_name_tmp") == dim_region.region_name, "left")
-            .withColumn("state_id", F.row_number().over(w_state))
-            .select("state_id", F.col("state").alias("state_name"), "region_id")
+        state_distinct_df = (
+            master_lookup_df.select(F.col("state").alias("state_name"), F.col("region").alias("region_name")).distinct()
+            .filter(F.col("state_name").isNotNull())
         )
 
-        w_city = Window.partitionBy().orderBy("city", "state")
+        w_state = Window.partitionBy().orderBy("state_name")
+        dim_state = (
+            state_distinct_df
+            .join(F.broadcast(dim_region), "region_name", "left")
+            .withColumn("state_id", F.row_number().over(w_state))
+            .select("state_id", "state_name", "region_id")
+        )
+
+        w_city = Window.partitionBy().orderBy("state_name", "city_name")
         dim_city_base = (
             master_lookup_df
-            .join(F.broadcast(dim_state), master_lookup_df.state == dim_state.state_name, "left")
+            .withColumnRenamed("state", "state_name")
+            .withColumnRenamed("city", "city_name")
+            .join(F.broadcast(dim_state), "state_name", "left")
             .withColumn("city_id", F.row_number().over(w_city))
             .select(
                 "city_id",
-                F.col("city").alias("city_name"),
+                "city_name",
                 "state_id",
                 "district",
                 "lat",
@@ -382,11 +433,11 @@ def main():
     else:
         logger.info("PASSED: dim_city -> city_id primary key uniqueness check.")
 
-    dup_city_names = dim_city.count() - dim_city.select("city_name").distinct().count()
-    if dup_city_names > 0:
-        dim_validation_failures.append(f"ERROR: dim_city has {dup_city_names} duplicate city names.")
+    dup_composite_cities = dim_city.count() - dim_city.select("city_name", "state_id").distinct().count()
+    if dup_composite_cities > 0:
+        dim_validation_failures.append(f"ERROR: dim_city has {dup_composite_cities} duplicate (city_name, state_id) composite entities.")
     else:
-        logger.info("PASSED: dim_city -> city_name strict uniqueness check.")
+        logger.info("PASSED: dim_city -> (city_name, state_id) composite key uniqueness check.")
 
     if dim_validation_failures:
         for fail in dim_validation_failures:
@@ -422,28 +473,43 @@ def main():
         dim_city
         .join(dim_state, "state_id")
         .select("city_id", "state_id", "city_name", "state_name", "is_sampled")
+        .withColumn("city_key", F.lower(F.trim(F.col("city_name"))))
     )
 
-    weather_paths = [
-        f"{BRONZE_BUCKET}/wd1/",
-        f"{BRONZE_BUCKET}/wd2/",
-        f"{BRONZE_BUCKET}/wd3/"
-    ]
-    logger.info(f"Reading Bronze weather datasets lazily from: {weather_paths}")
+    weather_path_sets = []
+    for base in BRONZE_BASES:
+        weather_path_sets.append([f"{base}/w_d_1/", f"{base}/w_d_2/", f"{base}/w_d_3/"])
+        weather_path_sets.append([f"{base}/w_d_1/"])
+        weather_path_sets.append([f"{base}/weather/"])
+        weather_path_sets.append([f"{base}/weather"])
+        weather_path_sets.append([f"{base}/wd1/", f"{base}/wd2/", f"{base}/wd3/"])
+        weather_path_sets.append([f"{base}/wd1/"])
+
+    raw_weather_df = None
+    for w_paths in weather_path_sets:
+        try:
+            logger.info(f"Attempting to read weather datasets lazily from candidate set: {w_paths}")
+            raw_weather_df = spark.read.parquet(*w_paths)
+            logger.info("Raw weather dataframe reader initialized.")
+            break
+        except Exception as w_err:
+            logger.warning(f"Weather path candidate set ({w_paths}) failed: {w_err}")
+
+    if raw_weather_df is None:
+        raise FileNotFoundError(f"Could not read weather data from any candidate path set in {BRONZE_BASES}")
 
     try:
-        raw_weather_df = spark.read.parquet(*weather_paths)
-        logger.info("Raw weather dataframe reader initialized.")
+        raw_weather_clean = raw_weather_df.withColumn("city_key", F.lower(F.trim(F.col("city"))))
 
         # Single Broadcast Join across full dataset with memory persistence
         joined_weather = (
-            raw_weather_df
+            raw_weather_clean
             .join(
                 F.broadcast(full_city_lookup),
-                raw_weather_df.city == full_city_lookup.city_name,
+                "city_key",
                 "inner"
             )
-            .drop("city", "city_name")
+            .drop("city", "city_name", "city_key")
             .persist(StorageLevel.MEMORY_AND_DISK_SER)
         )
 
@@ -500,12 +566,17 @@ def main():
     logger.info(f"Crop Data Output Path : {CROP_DATA_OUTPUT_PATH}")
 
     try:
-        crop_candidate_paths = [
-            CROP_DATA_INPUT_PATH,
-            f"{BRONZE_BUCKET}/crop/Custom_Crops_yield_Historical_Dataset.csv",
-            f"{BRONZE_BUCKET}/crop",
-            f"{BRONZE_BUCKET}/crop_data"
-        ]
+        crop_candidate_paths = [CROP_DATA_INPUT_PATH]
+        for base in BRONZE_BASES:
+            crop_candidate_paths.extend([
+                f"{base}/crop/Custom_Crops_yield_Historical_Dataset.csv",
+                f"{base}/crop_data/Custom_Crops_yield_Historical_Dataset.csv",
+                f"{base}/crop_data",
+                f"{base}/crop",
+                f"{base}/crop/Custom_Crops_yield_Historical_Dataset.parquet"
+            ])
+        seen_crop = set()
+        crop_candidate_paths = [p for p in crop_candidate_paths if p and not (p in seen_crop or seen_crop.add(p))]
         raw_crop_df = None
         for cp in crop_candidate_paths:
             try:
@@ -593,3 +664,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
