@@ -3,45 +3,90 @@ import pandas as pd
 import os
 import time
 
-ZIP_PATH = "/home/hadoop/archive.zip"
-OUTPUT_PATH = "/home/hadoop/parquet/w_d_2"
 
-os.makedirs(OUTPUT_PATH, exist_ok=True)
+zip_path = r"D:\Weather\archive.zip"
 
-start = time.time()
+output_path = r"D:\Weather\parquet\w_d_2"
 
-with zipfile.ZipFile(ZIP_PATH, "r") as z:
+os.makedirs(output_path, exist_ok=True)
 
+
+with zipfile.ZipFile(zip_path, 'r') as z:
+
+    # get only w_d_2 csv files
     csv_files = [
         f for f in z.namelist()
         if f.startswith("w_d_2/")
         and f.endswith(".csv")
     ]
 
-    print("Total Files:", len(csv_files))
+    print("Total w_d_2 files:", len(csv_files))
 
-    for i, file in enumerate(csv_files, start=1):
 
-        city = os.path.basename(file).replace(".csv", "")
+    start = time.time()
 
-        print(f"[{i}/{len(csv_files)}] {city}")
 
-        with z.open(file) as f:
-            df = pd.read_csv(f, encoding="utf-8-sig")
+    for i, file in enumerate(csv_files):
 
-        df["city"] = city
+        try:
 
-        output_file = os.path.join(
-            OUTPUT_PATH,
-            city + ".parquet"
-        )
+            city = os.path.basename(file).replace(".csv", "")
 
-        df.to_parquet(
-            output_file,
-            engine="pyarrow",
-            compression="snappy",
-            index=False
-        )
+            print(
+                f"\n[{i+1}/{len(csv_files)}] Processing {city}"
+            )
 
-print("WD2 Completed")
-print("Time:", round((time.time()-start)/60,2), "minutes")
+
+            # read csv directly from zip
+            with z.open(file) as f:
+
+                df = pd.read_csv(
+                    f,
+                    encoding="utf-8-sig"
+                )
+                df.drop(columns=["Unnamed: 0"], inplace=True)
+
+            # add city column
+            df["city"] = city
+            
+
+
+            # parquet file path
+            output_file = os.path.join(
+                output_path,
+                city + ".parquet"
+            )
+
+
+            # convert to parquet
+            df.to_parquet(
+                output_file,
+                engine="pyarrow",
+                index=False
+            )
+
+
+            print(
+                "Saved:",
+                city,
+                "Rows:",
+                len(df)
+            )
+
+
+        except Exception as e:
+
+            print(
+                "FAILED:",
+                city,
+                e
+            )
+
+
+    print("\nW_D_2 Completed")
+
+    print(
+        "Total time:",
+        round((time.time()-start)/60,2),
+        "minutes"
+    )
