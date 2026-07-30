@@ -2,8 +2,8 @@ name: Medallion Data Pipeline (Bronze -> Silver -> Gold -> Athena/SageMaker)
 
 on:
   workflow_dispatch:        # manual trigger
-  schedule:
-    - cron: '0 3 * * *'     # daily at 03:00 UTC — adjust as needed
+  # schedule:
+  #   - cron: '0 3 * * *'     # daily at 03:00 UTC — adjust as needed
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
