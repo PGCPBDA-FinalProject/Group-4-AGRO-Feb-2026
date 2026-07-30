@@ -372,9 +372,9 @@ fact_weather = (
 )
 
 
-# STEP 5: CROP DATA SCHEMA VERIFICATION & PARQUET CONVERSION
+# STEP 5: CROP DATA PERSISTENCE & PARQUET CONVERSION
 
-logger.info("Step 5: Executing Crop Data Schema Verification & Parquet Export...")
+logger.info("Step 5: Executing Crop Data Ingestion & Parquet Export...")
 logger.info(f"Crop Data Input Path  : {CROP_DATA_INPUT_PATH}")
 logger.info(f"Crop Data Output Path : {CROP_DATA_OUTPUT_PATH}")
 
@@ -384,6 +384,7 @@ try:
         crop_candidate_paths.extend([
             f"{base}/crop/Custom_Crops_yield_Historical_Dataset.csv",
             f"{base}/crop_data/Custom_Crops_yield_Historical_Dataset.csv",
+            f"{base}/bronze/crop/Custom_Crops_yield_Historical_Dataset.csv",
             f"{base}/crop_data",
             f"{base}/crop",
             f"{base}/crop/Custom_Crops_yield_Historical_Dataset.parquet"
@@ -409,47 +410,18 @@ try:
         except Exception as err:
             logger.warning(f"Crop Data candidate path ({cp}) failed: {err}")
 
-    if raw_crop_df is not None:
-        expected_crop_schema = [
-            ("date", StringType()),
-            ("temperature_2m", DoubleType()),
-            ("relative_humidity_2m", DoubleType()),
-            ("dew_point_2m", DoubleType()),
-            ("apparent_temperature", DoubleType()),
-            ("precipitation", DoubleType()),
-            ("rain", DoubleType()),
-            ("snowfall", DoubleType()),
-            ("snow_depth", DoubleType()),
-            ("pressure_msl", DoubleType()),
-            ("surface_pressure", DoubleType()),
-            ("cloud_cover", DoubleType()),
-            ("cloud_cover_low", DoubleType()),
-            ("cloud_cover_mid", DoubleType()),
-            ("cloud_cover_high", DoubleType()),
-            ("wind_speed_10m", DoubleType()),
-            ("wind_speed_100m", DoubleType()),
-            ("wind_direction_10m", DoubleType()),
-            ("wind_direction_100m", DoubleType()),
-            ("wind_gusts_10m", DoubleType()),
-            ("city", StringType())
-        ]
-
-        input_columns = set(raw_crop_df.columns)
-        missing_cols = [col_name for col_name, _ in expected_crop_schema if col_name not in input_columns]
-        if missing_cols:
-            logger.warning(f"Crop Data missing columns: {missing_cols}")
-        else:
-            select_exprs = [
-                F.col(col_name).cast(col_type).alias(col_name)
-                for col_name, col_type in expected_crop_schema
-            ]
-            crop_df_validated = raw_crop_df.select(*select_exprs)
-            crop_df_validated.write.mode("overwrite").parquet(CROP_DATA_OUTPUT_PATH)
-            logger.info(f"SUCCESS: Wrote Crop Data Parquet dataset -> {CROP_DATA_OUTPUT_PATH}")
+    if raw_crop_df is not None and len(raw_crop_df.columns) > 0:
+        # Standardize column names (lowercase & sanitized for Parquet/Athena compatibility)
+        clean_cols = [col.strip().lower().replace(" ", "_").replace("-", "_") for col in raw_crop_df.columns]
+        crop_df_clean = raw_crop_df.toDF(*clean_cols)
+        
+        # Write clean Parquet dataset to Silver S3 target
+        crop_df_clean.coalesce(1).write.mode("overwrite").parquet(CROP_DATA_OUTPUT_PATH)
+        logger.info(f"SUCCESS: Wrote Crop Data ({crop_df_clean.count()} rows, {len(clean_cols)} cols) Parquet dataset -> {CROP_DATA_OUTPUT_PATH}")
     else:
-        logger.warning(f"Crop Data processing skipped (could not read from candidate paths in {BRONZE_BUCKET})")
+        logger.error(f"CRITICAL: Crop Data processing skipped (could not read from candidate paths in {BRONZE_BUCKET})")
 except Exception as crop_err:
-    logger.warning(f"Crop Data step encountered an error ({crop_err}). Continuing pipeline...")
+    logger.error(f"Crop Data step encountered an error ({crop_err}). Continuing pipeline...")
 
 
 # STEP 6: VALIDATE DATA QUALITY & AUDIT
