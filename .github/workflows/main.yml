@@ -1,14 +1,15 @@
 name: Medallion Data Pipeline (Bronze -> Silver -> Gold -> Athena/SageMaker)
- 
+
 on:
   workflow_dispatch:        # manual trigger
-     # daily at 03:00 UTC — adjust as needed
- 
+  schedule:
+    - cron: '0 3 * * *'     # daily at 03:00 UTC — adjust as needed
+
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
- 
+
 jobs:
- 
+
   # ---------------------------------------------------------------------
   # 1. Transform: Bronze -> Silver via AWS Glue
   # ---------------------------------------------------------------------
@@ -16,21 +17,38 @@ jobs:
     name: AWS Glue (Bronze -> Silver)
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
- 
+
+      - name: Upload latest script to S3
+        run: |
+          aws s3 cp gluesilver/bronze_to_silver.py \
+            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/bronze_to_silver.py"
+
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
         run: |
           RUN_ID=$(aws glue start-job-run \
             --job-name "${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}" \
+            # --arguments '{
+            #   "--BRONZE_BUCKET": "${{ secrets.S3_BRONZE_PATH }}",
+            #   "--SILVER_BUCKET": "${{ secrets.S3_SILVER_PATH }}",
+            #   "--CROP_DATA_INPUT_PATH": "${{ secrets.CROP_DATA_INPUT_PATH }}",
+            #   "--CROP_DATA_OUTPUT_PATH": "${{ secrets.CROP_DATA_OUTPUT_PATH }}",
+            #   "--PERCENTAGE": "${{ vars.SAMPLING_PERCENTAGE || '0.30' }}",
+            #   "--MIN_CITIES": "${{ vars.SAMPLING_MIN_CITIES || '15' }}",
+            #   "--SEED": "${{ vars.SAMPLING_SEED || '42' }}"
+            # }' \
             --query "JobRunId" --output text)
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
- 
+
       - name: Poll Glue job until complete
         run: |
           JOB_NAME="${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}"
@@ -45,7 +63,7 @@ jobs:
             fi
             sleep 30
           done
- 
+
   # ---------------------------------------------------------------------
   # 2. Transform: Silver -> Gold via AWS Glue
   # ---------------------------------------------------------------------
@@ -54,21 +72,33 @@ jobs:
     needs: bronze-to-silver
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
- 
+
+      - name: Upload latest script to S3
+        run: |
+          aws s3 cp gluesilver/silver_to_gold.py \
+            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/silver_to_gold.py"
+
       - name: Start Glue job (silver -> gold)
         id: glue_gold
         run: |
           RUN_ID=$(aws glue start-job-run \
             --job-name "${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}" \
+            --arguments '{
+              "--SILVER_S3_PATH": "${{ secrets.S3_SILVER_PATH }}",
+              "--GOLD_S3_PATH": "${{ secrets.S3_GOLD_PATH }}"
+            }' \
             --query "JobRunId" --output text)
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
- 
+
       - name: Poll Glue job until complete
         run: |
           JOB_NAME="${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}"
@@ -83,10 +113,10 @@ jobs:
             fi
             sleep 30
           done
- 
-  # ---------------------------------------------------------------------
-  # 3a. BI path: Gold -> Athena (refresh) -> Power BI reads live from Athena
-  # ---------------------------------------------------------------------
+
+  # # ---------------------------------------------------------------------
+  # # 3a. BI path: Gold -> Athena (refresh) -> Power BI reads live from Athena
+  # # ---------------------------------------------------------------------
   # gold-to-athena:
   #   name: Athena Refresh (Gold -> Power BI)
   #   needs: silver-to-gold
@@ -98,7 +128,7 @@ jobs:
   #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
   #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   #         aws-region: ${{ env.AWS_REGION }}
- 
+
   #     - name: Refresh Athena table metadata (MSCK REPAIR)
   #       run: |
   #         QUERY_ID=$(aws athena start-query-execution \
@@ -114,7 +144,7 @@ jobs:
   #           if [[ "$STATE" == "FAILED" || "$STATE" == "CANCELLED" ]]; then exit 1; fi
   #           sleep 10
   #         done
- 
+
   #     - name: Trigger Power BI dataset refresh (optional)
   #       if: ${{ secrets.POWERBI_WORKSPACE_ID != '' }}
   #       run: |
@@ -128,10 +158,10 @@ jobs:
   #         curl -s -X POST \
   #           -H "Authorization: Bearer $TOKEN" \
   #           "https://api.powerbi.com/v1.0/myorg/groups/${{ secrets.POWERBI_WORKSPACE_ID }}/datasets/${{ secrets.POWERBI_DATASET_ID }}/refreshes"
- 
-  # ---------------------------------------------------------------------
-  # 3b. ML path: Gold -> SageMaker (processing/training job)
-  # ---------------------------------------------------------------------
+
+  # # ---------------------------------------------------------------------
+  # # 3b. ML path: Gold -> SageMaker (processing/training job)
+  # # ---------------------------------------------------------------------
   # gold-to-sagemaker:
   #   name: SageMaker Job (Gold -> ML)
   #   needs: silver-to-gold
@@ -143,13 +173,13 @@ jobs:
   #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
   #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   #         aws-region: ${{ env.AWS_REGION }}
- 
+
   #     - name: Start SageMaker Processing job
   #       id: sagemaker_job
   #       run: |
   #         JOB_NAME="gold-ml-job-$(date +%Y%m%d-%H%M%S)"
   #         echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
- 
+
   #         # Example: SageMaker Processing job reading Gold from S3.
   #         # Swap for `aws sagemaker create-training-job` if this is a training run
   #         # driven by a prebuilt training image/estimator instead.
@@ -183,7 +213,7 @@ jobs:
   #               "VolumeSizeInGB": 30
   #             }
   #           }'
- 
+
   #     - name: Poll SageMaker job until complete
   #       run: |
   #         JOB_NAME="${{ steps.sagemaker_job.outputs.job_name }}"
@@ -196,7 +226,7 @@ jobs:
   #           if [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then exit 1; fi
   #           sleep 30
   #         done
- 
+
   # ---------------------------------------------------------------------
   # 4. Notify once both downstream paths are done
   # ---------------------------------------------------------------------
@@ -206,4 +236,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Report success
-        run: echo "Pipeline completed
+        run: echo "Pipeline completed"
