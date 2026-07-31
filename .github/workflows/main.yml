@@ -106,3 +106,13 @@ jobs:
   #    (Athena/Power BI and SageMaker steps are commented out above for now
   #     — notify only depends on jobs that actually exist in this file)
   # ---------------------------------------------------------------------
+<<<<<<< HEAD
+=======
+  notify:
+    name: Pipeline complete
+    needs: [gold-to-athena, gold-to-sagemaker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report success
+        run: echo "Pipeline completed"
+>>>>>>> d73e97404fb6b72498cd451c3f062396849a554b
