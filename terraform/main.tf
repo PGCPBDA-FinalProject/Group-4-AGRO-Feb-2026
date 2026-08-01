@@ -1,7 +1,8 @@
-resource "aws_s3_bucket" "weather-dataset" {
-
-    bucket = "agro-weather-dataset"
-
+resource "aws_s3_bucket" "silver_bucket" {
+  bucket = var.bucket_name_silver
+}
+resource "aws_s3_bucket" "gold_bucket" {
+  bucket = var.bucket_name_gold
 }
 
 resource "aws_glue_catalog_database" "etl_db" {
@@ -9,32 +10,49 @@ resource "aws_glue_catalog_database" "etl_db" {
 }
 
 locals {
-  glue_role_arn = 
+  glue_role_arn = var.glue_role_arn
 }
 
-resource "aws_glue_job" "etl_job" {
-  name     = 
-  role_arn = 
+resource "aws_glue_job" "bronze_to_silver" {
+  name     = "bronze-to-silver-job"
+  role_arn = local.glue_role_arn
 
   command {
-    name            = "glueetl" # change not
-    script_location = 
+    name            = "glueetl"
+    script_location = "s3://${var.bucket_name_silver}/scripts/bronze_to_silver_glue.py"
     python_version  = "3"
   }
 
-  glue_version      = "5.0"  # GLUE VERSION
-  number_of_workers = 4      # NUMBER OF WORKERS
-  worker_type       = "G.1X" # WORKER TYPE  4 CPU AND 16GB
+  glue_version     = "5.0"
+  worker_type      = "G.1X"
+  number_of_workers = 2
+}
+resource "aws_glue_job" "silver_to_gold" {
+  name     = "silver-to-gold-job"
+  role_arn = local.glue_role_arn
+
+  command {
+    name            = "glueetl"
+    script_location = "s3://${var.bucket_name_gold}/scripts/silver_to_gold_glue.py"
+    python_version  = "3"
+  }
+
+  glue_version      = "5.0"
+  worker_type       = "G.1X"
+  number_of_workers = 2
 }
 
 resource "aws_glue_crawler" "etl_crawler" {
-  name          = 
-  role          = 
-  database_name = 
+  name          = var.glue_crawler_name
+  role          = local.glue_role_arn
+  database_name = aws_glue_catalog_database.etl_db.name
 
   s3_target {
-    path = "s3://"
+    path = "s3://${var.bucket_name_silver}/weatherdata/"
   }
 
-  depends_on = [aws_glue_job.etl_job]
+  depends_on = [
+  aws_glue_job.bronze_to_silver,
+  aws_glue_job.silver_to_gold
+]
 }
