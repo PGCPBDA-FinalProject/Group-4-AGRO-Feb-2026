@@ -203,21 +203,33 @@ except Exception as e:
         raise RuntimeError(f"CRITICAL ETL FAILURE: GeoSpatial enrichment failed and no valid state column exists ({e}). Pipeline aborted to protect Data Warehouse integrity.")
     logger.info("Relying on existing schema state/district attributes.")
 
-# Map Macro Regions
+# Map Macro Regions (5 Standardized Regions: North, South, East, West, Central)
 region_map = {
-    "Jammu & Kashmir": "Northern", "Ladakh": "Northern", "Himachal Pradesh": "Northern",
-    "Punjab": "Northern", "Chandigarh": "Northern", "Uttarakhand": "Northern",
-    "Haryana": "Northern", "Delhi": "Northern", "Rajasthan": "Northern",
-    "Uttar Pradesh": "North Central",
+    # North
+    "Jammu & Kashmir": "North", "Jammu and Kashmir": "North", "Ladakh": "North",
+    "Himachal Pradesh": "North", "Punjab": "North", "Chandigarh": "North",
+    "Uttarakhand": "North", "Uttaranchal": "North", "Haryana": "North",
+    "Delhi": "North", "Rajasthan": "North", "Uttar Pradesh": "North",
+
+    # Central
     "Madhya Pradesh": "Central", "Chhattisgarh": "Central",
-    "Bihar": "Eastern", "Jharkhand": "Eastern", "West Bengal": "Eastern", "Odisha": "Eastern",
-    "Assam": "Northeast", "Sikkim": "Northeast", "Arunachal Pradesh": "Northeast",
-    "Nagaland": "Northeast", "Manipur": "Northeast", "Mizoram": "Northeast",
-    "Tripura": "Northeast", "Meghalaya": "Northeast",
-    "Gujarat": "Western", "Maharashtra": "Western", "Goa": "Western",
-    "Andhra Pradesh": "Southern", "Telangana": "Southern", "Karnataka": "Southern",
-    "Tamil Nadu": "Southern", "Kerala": "Southern", "Puducherry": "Southern",
-    "Lakshadweep": "Southern", "Andaman & Nicobar": "Southern"
+
+    # East
+    "Bihar": "East", "Jharkhand": "East", "West Bengal": "East",
+    "Odisha": "East", "Orissa": "East",
+    "Assam": "East", "Sikkim": "East", "Arunachal Pradesh": "East",
+    "Nagaland": "East", "Manipur": "East", "Mizoram": "East",
+    "Tripura": "East", "Meghalaya": "East",
+
+    # West
+    "Gujarat": "West", "Maharashtra": "West", "Goa": "West",
+    "Dadra and Nagar Haveli and Daman and Diu": "West",
+    "Dadra and Nagar Haveli": "West", "Daman and Diu": "West",
+
+    # South
+    "Andhra Pradesh": "South", "Telangana": "South", "Karnataka": "South",
+    "Tamil Nadu": "South", "Kerala": "South", "Puducherry": "South",
+    "Lakshadweep": "South", "Andaman & Nicobar": "South", "Andaman and Nicobar": "South"
 }
 cm_pd["region"] = cm_pd["state"].map(region_map).fillna("Other")
 
