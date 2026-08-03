@@ -85,15 +85,15 @@ jobs:
       # in the repo. Adjust the source path if yours differ.
       - name: Upload ingestion scripts to S3
         run: |
-          aws s3 cp emr-scripts/geojson.py \
+          aws s3 cp scripts/geojson.py \
             "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/geojson.py"
-          aws s3 cp emr-scripts/convert_city_master.py \
+          aws s3 cp scripts/convert_city_master.py \
             "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_city_master.py"
-          aws s3 cp emr-scripts/convert_wd1.py \
+          aws s3 cp scripts/convert_wd1.py \
             "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd1.py"
-          aws s3 cp emr-scripts/convert_wd2.py \
+          aws s3 cp scripts/convert_wd2.py \
             "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd2.py"
-          aws s3 cp emr-scripts/convert_wd3.py \
+          aws s3 cp scripts/convert_wd3.py \
             "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd3.py"
 
       # Bootstrap runs once per node at cluster launch: installs the
