@@ -18,12 +18,18 @@ DATASET = "mukeshdevrath007/indian-5000-cities-weather-data"
 S3_BUCKET = "agro-weather-data-lake"
 S3_PREFIX = "bronze-level"
 
-DOWNLOAD_DIR = Path("/home/hadoop/kaggle_download")
-EXTRACT_DIR = Path("/home/hadoop/weather_extract")
-PARQUET_DIR = Path("/home/hadoop/parquet_temp")
+# Paths are configurable via environment variables for portability
+DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", "/home/hadoop/kaggle_download"))
+EXTRACT_DIR = Path(os.environ.get("EXTRACT_DIR", "/home/hadoop/weather_extract"))
+PARQUET_DIR = Path(os.environ.get("PARQUET_DIR", "/home/hadoop/parquet_temp"))
 
-CHUNK_SIZE = 500_000
-FOLDERS = ["Weather_Data_Scraping_and_Analysis","w_d_1", "w_d_2", "w_d_3"]
+CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 500_000))
+FOLDERS = os.environ.get("FOLDERS", "Weather_Data_Scraping_and_Analysis,w_d_1,w_d_2,w_d_3").split(",")
+
+print(f"DOWNLOAD_DIR={DOWNLOAD_DIR}")
+print(f"EXTRACT_DIR={EXTRACT_DIR}")
+print(f"PARQUET_DIR={PARQUET_DIR}")
+print(f"CHUNK_SIZE={CHUNK_SIZE}")
 
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
