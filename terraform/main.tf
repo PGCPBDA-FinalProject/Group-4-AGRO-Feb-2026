@@ -6,11 +6,11 @@ data "aws_s3_bucket" "bronze_bucket" {
   bucket = var.bucket_name_bronze
 }
 
-resource "aws_s3_bucket" "silver_bucket" {
+data "aws_s3_bucket" "silver_bucket" {
   bucket = var.bucket_name_silver
 }
 
-resource "aws_s3_bucket" "gold_bucket" {
+data "aws_s3_bucket" "gold_bucket" {
   bucket = var.bucket_name_gold
 }
 

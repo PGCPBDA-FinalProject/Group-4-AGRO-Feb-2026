@@ -3,11 +3,11 @@ output "bronze_bucket_name" {
 }
 
 output "silver_bucket_name" {
-  value = aws_s3_bucket.silver_bucket.bucket
+  value = data.aws_s3_bucket.silver_bucket.bucket
 }
 
 output "gold_bucket_name" {
-  value = aws_s3_bucket.gold_bucket.bucket
+  value = data.aws_s3_bucket.gold_bucket.bucket
 }
 
 output "glue_database_name" {
