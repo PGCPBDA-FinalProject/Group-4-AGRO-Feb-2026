@@ -28,7 +28,8 @@ with zipfile.ZipFile(ZIP_PATH, "r") as z:
 
         with z.open(file) as f:
             df = pd.read_csv(f, encoding="utf-8-sig")
-        df.drop(columns=["Unnamed: 0"], inplace=True)
+        if "Unnamed: 0" in df.columns:
+            df.drop(columns=["Unnamed: 0"], inplace=True)
         df["city"] = city
 
         output_file = os.path.join(

@@ -15,7 +15,8 @@ with zipfile.ZipFile(ZIP_PATH, "r") as z:
 
         df = pd.read_csv(f)
 
-df.drop(columns=["Unnamed: 0"], inplace=True)
+if "Unnamed: 0" in df.columns:
+    df.drop(columns=["Unnamed: 0"], inplace=True)
 
 output_file = os.path.join(
     OUTPUT_PATH,

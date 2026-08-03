@@ -19,7 +19,7 @@ resource "aws_glue_job" "bronze_to_silver" {
 
   command {
     name            = "glueetl"
-    script_location = "s3://${var.bucket_name_silver}/scripts/bronze_to_silver_glue.py"
+    script_location = "s3://${var.bucket_name_silver}/scripts/bronze_to_silver.py"
     python_version  = "3"
   }
 
@@ -33,7 +33,7 @@ resource "aws_glue_job" "silver_to_gold" {
 
   command {
     name            = "glueetl"
-    script_location = "s3://${var.bucket_name_gold}/scripts/silver_to_gold_glue.py"
+    script_location = "s3://${var.bucket_name_gold}/scripts/silver_to_gold.py"
     python_version  = "3"
   }
 
