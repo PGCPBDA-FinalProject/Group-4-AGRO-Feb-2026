@@ -40,16 +40,23 @@ jobs:
       - name: Terraform Plan
         working-directory: terraform
         run: terraform plan
+        env:
+          TF_VAR_glue_role_arn: ${{ secrets.GLUE_ROLE_ARN }}
 
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
+        env:
+          TF_VAR_glue_role_arn: ${{ secrets.GLUE_ROLE_ARN }}
 
   # ---------------------------------------------------------------------
-  # 1. Transform: Bronze -> Silver via AWS Glue
+  # 1. Ingest: Raw -> Bronze via a transient EMR cluster
+  #    Runs geojson.py, convert_city_master.py, convert_wd1/2/3.py.
+  #    Cluster auto-terminates once the steps finish (or fails fast on
+  #    the first step failure) so nothing idles/bills between runs.
   # ---------------------------------------------------------------------
-  bronze-to-silver:
-    name: AWS Glue (Bronze -> Silver)
+  ingest-emr:
+    name: EMR (Raw -> Bronze Ingestion)
 
     needs: terraform
 
@@ -66,10 +73,131 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # Assumes the 5 ingestion scripts live in an emr-scripts/ folder
+      # in the repo. Adjust the source path if yours differ.
+      - name: Upload ingestion scripts to S3
+        run: |
+          aws s3 cp emr-scripts/geojson.py \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/geojson.py"
+          aws s3 cp emr-scripts/convert_city_master.py \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_city_master.py"
+          aws s3 cp emr-scripts/convert_wd1.py \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd1.py"
+          aws s3 cp emr-scripts/convert_wd2.py \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd2.py"
+          aws s3 cp emr-scripts/convert_wd3.py \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd3.py"
+
+      # Bootstrap runs once per node at cluster launch: installs the
+      # Python deps the scripts need (not preinstalled on EMR), then
+      # pre-stages the raw Kaggle zip and the scripts themselves onto
+      # the master node under /home/hadoop, matching the LOCAL_ZIP /
+      # script paths each convert_*.py already hardcodes.
+      - name: Upload bootstrap action to S3
+        run: |
+          cat > bootstrap.sh << 'EOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          sudo python3 -m pip install --quiet boto3 pandas pyarrow requests
+
+          mkdir -p /home/hadoop/kaggle /home/hadoop/parquet /home/hadoop/temp
+
+          aws s3 cp "s3://__BRONZE_BUCKET__/raw/indian-5000-cities-weather-data.zip" \
+            /home/hadoop/kaggle/indian-5000-cities-weather-data.zip
+
+          aws s3 cp "s3://__BRONZE_BUCKET__/emr/scripts/" /home/hadoop/ --recursive
+          EOF
+
+          sed -i "s|__BRONZE_BUCKET__|${{ secrets.BRONZE_BUCKET }}|g" bootstrap.sh
+
+          aws s3 cp bootstrap.sh \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh"
+
+      # Step order matters: convert_wd3.py is the only script that
+      # deletes the local zip on cleanup, so it must run last. The
+      # others just read the zip the bootstrap action already staged.
+      - name: Create EMR cluster and submit ingestion steps
+        id: emr
+        run: |
+          CLUSTER_ID=$(aws emr create-cluster \
+            --name "agri-weather-raw-to-bronze-${{ github.run_id }}" \
+            --release-label "${{ secrets.EMR_RELEASE_LABEL }}" \
+            --applications Name=Hadoop \
+            --service-role "${{ secrets.EMR_SERVICE_ROLE }}" \
+            --ec2-attributes InstanceProfile="${{ secrets.EMR_INSTANCE_PROFILE }}",SubnetId="${{ secrets.EMR_SUBNET_ID }}" \
+            --instance-groups \
+              InstanceGroupType=MASTER,InstanceCount=1,InstanceType="${{ secrets.EMR_MASTER_INSTANCE_TYPE }}" \
+              InstanceGroupType=CORE,InstanceCount="${{ secrets.EMR_CORE_INSTANCE_COUNT }}",InstanceType="${{ secrets.EMR_CORE_INSTANCE_TYPE }}" \
+            --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh" \
+            --log-uri "s3://${{ secrets.BRONZE_BUCKET }}/emr/logs/" \
+            --steps '[
+              {"Name":"geojson-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/geojson.py"]}},
+              {"Name":"city-master-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_city_master.py"]}},
+              {"Name":"wd1-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_wd1.py"]}},
+              {"Name":"wd2-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_wd2.py"]}},
+              {"Name":"wd3-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_wd3.py"]}}
+            ]' \
+            --auto-terminate \
+            --visible-to-all-users \
+            --query "ClusterId" \
+            --output text)
+
+          echo "cluster_id=$CLUSTER_ID" >> "$GITHUB_OUTPUT"
+          echo "Cluster launched: $CLUSTER_ID"
+
+      - name: Poll EMR cluster until terminated
+        run: |
+          CLUSTER_ID="${{ steps.emr.outputs.cluster_id }}"
+
+          while true; do
+            STATE=$(aws emr describe-cluster \
+              --cluster-id "$CLUSTER_ID" \
+              --query "Cluster.Status.State" \
+              --output text)
+
+            echo "EMR cluster state: $STATE"
+
+            if [ "$STATE" == "TERMINATED" ]; then
+              break
+            fi
+
+            if [ "$STATE" == "TERMINATED_WITH_ERRORS" ]; then
+              echo "EMR cluster terminated with errors."
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+  # ---------------------------------------------------------------------
+  # 2. Transform: Bronze -> Silver via AWS Glue
+  # ---------------------------------------------------------------------
+  bronze-to-silver:
+    name: AWS Glue (Bronze -> Silver)
+
+    needs: [terraform, ingest-emr]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # NOTE: filename/path now matches the file Terraform's
+      # aws_glue_job.bronze_to_silver.command.script_location expects:
+      # s3://<silver_bucket>/scripts/bronze_to_silver_glue.py
       - name: Upload latest script to S3
         run: |
-          aws s3 cp gluesilver/bronze_to_silver.py \
-            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/bronze_to_silver.py"
+          aws s3 cp glue-scripts/bronze_to_silver_glue.py \
+            "s3://${{ secrets.SILVER_BUCKET }}/scripts/bronze_to_silver_glue.py"
 
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
@@ -107,7 +235,7 @@ jobs:
           done
 
   # ---------------------------------------------------------------------
-  # 2. Transform: Silver -> Gold via AWS Glue
+  # 3. Transform: Silver -> Gold via AWS Glue
   # ---------------------------------------------------------------------
   silver-to-gold:
     name: AWS Glue (Silver -> Gold)
@@ -127,10 +255,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # NOTE: filename/path now matches Terraform's
+      # aws_glue_job.silver_to_gold.command.script_location:
+      # s3://<gold_bucket>/scripts/silver_to_gold_glue.py
       - name: Upload latest script to S3
         run: |
-          aws s3 cp gluegold/silver_to_gold.py \
-            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/silver_to_gold.py"
+          aws s3 cp glue-scripts/silver_to_gold_glue.py \
+            "s3://${{ secrets.GOLD_BUCKET }}/scripts/silver_to_gold_glue.py"
 
       - name: Start Glue job (silver -> gold)
         id: glue_gold
