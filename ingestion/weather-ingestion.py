@@ -15,7 +15,7 @@ from kaggle.api.kaggle_api_extended import KaggleApi
 
 DATASET = "mukeshdevrath007/indian-5000-cities-weather-data"
 
-S3_BUCKET = "agri-weather-dataset"
+S3_BUCKET = "agro-weather-data-lake"
 S3_PREFIX = "bronze-level"
 
 DOWNLOAD_DIR = Path("/home/hadoop/kaggle_download")

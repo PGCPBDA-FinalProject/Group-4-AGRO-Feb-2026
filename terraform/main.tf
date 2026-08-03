@@ -10,7 +10,8 @@ resource "aws_glue_catalog_database" "etl_db" {
 }
 
 locals {
-  glue_role_arn = var.glue_role_arn
+  glue_role_arn  = var.glue_role_arn
+  glue_role_name = regexreplace(var.glue_role_arn, "^.*/", "")
 }
 
 resource "aws_glue_job" "bronze_to_silver" {
@@ -44,7 +45,7 @@ resource "aws_glue_job" "silver_to_gold" {
 
 resource "aws_glue_crawler" "etl_crawler" {
   name          = var.glue_crawler_name
-  role          = local.glue_role_arn
+  role          = local.glue_role_name
   database_name = aws_glue_catalog_database.etl_db.name
 
   s3_target {

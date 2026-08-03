@@ -5,10 +5,10 @@ variable "region" {
 
 #declare a bucket name
 variable "bucket_name_silver" {
-  default = "agroweatherdatalake"
+  default = "agro-weather-data-lake"
 }
 variable "bucket_name_gold" {
-  default = "agroweatherdatalake2"
+  default = "agro-weather-data-lake2"
 }
 
 
