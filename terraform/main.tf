@@ -37,9 +37,9 @@ resource "aws_glue_job" "silver_to_gold" {
     python_version  = "3"
   }
 
-  glue_version      = "5.0"
+  glue_version      = "5.1"
   worker_type       = "G.1X"
-  number_of_workers = 2
+  number_of_workers = 10
 }
 
 resource "aws_glue_crawler" "etl_crawler" {
