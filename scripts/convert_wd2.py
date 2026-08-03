@@ -106,7 +106,7 @@ with zipfile.ZipFile(LOCAL_ZIP, "r") as z:
 # CLEANUP
 # ===========================
 
-os.remove(LOCAL_ZIP)
+
 
 print("Completed")
 
