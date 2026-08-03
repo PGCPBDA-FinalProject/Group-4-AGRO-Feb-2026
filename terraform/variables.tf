@@ -16,7 +16,7 @@ variable "region" {
 variable "bucket_name_bronze" {
   description = "Existing S3 bucket holding raw/bronze data"
   type        = string
-  default     = "agriweatherdataset1"
+  default     = "agri-weather-dataset1"
 }
 
 variable "bucket_name_silver" {
