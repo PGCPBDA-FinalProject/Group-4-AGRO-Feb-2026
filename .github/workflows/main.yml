@@ -40,15 +40,21 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform
-        run: terraform plan
+        run: terraform plan -input=false
         env:
           TF_VAR_glue_role_arn: ${{ secrets.GLUE_ROLE_ARN }}
+          TF_VAR_emr_service_role: ${{ secrets.EMR_SERVICE_ROLE }}
+          TF_VAR_emr_instance_profile: ${{ secrets.EMR_INSTANCE_PROFILE }}
+          TF_VAR_emr_subnet_id: ${{ secrets.EMR_SUBNET_ID }}
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false
         env:
           TF_VAR_glue_role_arn: ${{ secrets.GLUE_ROLE_ARN }}
+          TF_VAR_emr_service_role: ${{ secrets.EMR_SERVICE_ROLE }}
+          TF_VAR_emr_instance_profile: ${{ secrets.EMR_INSTANCE_PROFILE }}
+          TF_VAR_emr_subnet_id: ${{ secrets.EMR_SUBNET_ID }}
 
   # ---------------------------------------------------------------------
   # 1. Ingest: Raw -> Bronze via a transient EMR cluster
