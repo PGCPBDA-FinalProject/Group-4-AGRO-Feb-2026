@@ -11,7 +11,7 @@ resource "aws_glue_catalog_database" "etl_db" {
 
 locals {
   glue_role_arn  = var.glue_role_arn
-  glue_role_name = regexreplace(var.glue_role_arn, "^.*/", "")
+  glue_role_name = element(split("/", var.glue_role_arn), length(split("/", var.glue_role_arn)) - 1)
 }
 
 resource "aws_glue_job" "bronze_to_silver" {
