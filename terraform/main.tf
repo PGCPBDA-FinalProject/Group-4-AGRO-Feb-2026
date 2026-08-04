@@ -27,7 +27,7 @@ resource "aws_glue_job" "bronze_to_silver" {
   command {
     name            = "glueet"
     python_version  = "3"
-    script_location = "s3://${var.glue_assets_bucket}/scripts/bronze_to_silver_glue.py"
+    script_location = "s3://${var.bronze_bucket}/scripts/bronze_to_silver_glue.py"
   }
 
   default_arguments = {
@@ -74,7 +74,7 @@ resource "aws_glue_job" "silver_to_gold" {
   command {
     name            = "glueet"
     python_version  = "3"
-    script_location = "s3://${var.glue_assets_bucket}/scripts/silver_to_gold_glue.py"
+    script_location = "s3://${var.bronze_bucket}/scripts/silver_to_gold_glue.py"
   }
 
   default_arguments = {
