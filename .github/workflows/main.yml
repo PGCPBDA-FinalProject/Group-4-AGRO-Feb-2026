@@ -44,7 +44,7 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply 
+        run: terraform apply -auto-approve
 
   # ---------------------------------------------------------------------
   # 1. Transform: Bronze -> Silver via AWS Glue
