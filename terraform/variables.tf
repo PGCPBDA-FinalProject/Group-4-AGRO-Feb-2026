@@ -3,7 +3,7 @@ variable "region" {
 }
 
 variable "glue_role_arn" {
-  default = "arn:aws:iam::381492026114:role/LabRole"
+  default = "arn:aws:iam::533267437108:role/LabRole"
 }
 
 variable "bronze_bucket" {
