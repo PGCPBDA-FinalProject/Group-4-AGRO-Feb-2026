@@ -1,4 +1,4 @@
-name: Medallion Data Pipeline (Bronze -> Silver -> Gold -> Athena/SageMaker)
+name: Medallion Data Pipeline (Bronze -> Silver -> Gold)
 
 on:
   workflow_dispatch:
@@ -17,43 +17,17 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      # Diagnostic: confirms which AWS identity is actually being used
-      # and whether it can reach the state bucket at all, BEFORE
-      # terraform tries and fails with a bare 403. If this step itself
-      # fails or shows an unexpected account/ARN, the problem is IAM
-      # permissions or wrong credentials -- not Terraform config.
-      #
-      # Non-blocking (|| true) on purpose: this step is diagnostic
-      # only. If it fails, terraform init below still runs and will
-      # surface its own error -- we don't want a diagnostic check to
-      # be the thing that kills the job before Terraform even tries.
-      - name: Verify AWS identity and state bucket access
-        run: |
-          echo "Current AWS identity:"
-          aws sts get-caller-identity
-
-          echo "Checking bucket access:"
-          aws s3api head-bucket --bucket agro-weather-terraform-state-654654400554 \
-            || echo "head-bucket failed - see error above (bucket may not exist yet, or wrong account/permissions)"
-
-          echo "Checking state object access:"
-          aws s3api head-object \
-            --bucket agro-weather-terraform-state-654654400554 \
-            --key agro-weather/terraform.tfstate \
-            || echo "head-object failed - see error above (expected on first-ever run, since no state file exists yet)"
+        uses: hashicorp/setup-terraform@v4
 
       - name: Terraform Init
         working-directory: terraform
@@ -65,261 +39,37 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform
-        run: terraform plan -input=false
-        env:
-          TF_VAR_glue_role_arn: ${{ secrets.GLUE_ROLE_ARN }}
-          TF_VAR_emr_service_role: ${{ secrets.EMR_SERVICE_ROLE }}
-          TF_VAR_emr_instance_profile: ${{ secrets.EMR_INSTANCE_PROFILE }}
-          TF_VAR_emr_subnet_id: ${{ secrets.EMR_SUBNET_ID }}
+        run: terraform plan
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve -input=false
-        env:
-          TF_VAR_glue_role_arn: ${{ secrets.GLUE_ROLE_ARN }}
-          TF_VAR_emr_service_role: ${{ secrets.EMR_SERVICE_ROLE }}
-          TF_VAR_emr_instance_profile: ${{ secrets.EMR_INSTANCE_PROFILE }}
-          TF_VAR_emr_subnet_id: ${{ secrets.EMR_SUBNET_ID }}
+        run: terraform apply -auto-approve
 
   # ---------------------------------------------------------------------
-  # 1. Ingest: Raw -> Bronze via a transient EMR cluster
-  #    Runs geojson.py, convert_city_master.py, convert_wd1/2/3.py.
-  #    Cluster auto-terminates once the steps finish (or fails fast on
-  #    the first step failure) so nothing idles/bills between runs.
-  # ---------------------------------------------------------------------
-  ingest-emr:
-    name: EMR (Raw -> Bronze Ingestion)
-    needs: [terraform]
-
-    runs-on: ubuntu-latest
-
-    steps:
-      # ubuntu-latest runners only expose ~14GB free by default; most
-      # of the disk is consumed by preinstalled tooling we don't need
-      # (Docker images, .NET, Android SDK, GHC/Haskell, etc). Clear it
-      # out before downloading the Kaggle dataset so we don't hit
-      # "No space left on device" mid-download.
-      - name: Free up disk space
-        run: |
-          echo "Disk space before cleanup:"
-          df -h /
-
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/boost
-          sudo docker image prune -af || true
-
-          echo "Disk space after cleanup:"
-          df -h /
-
-      - name: Checkout repo
-        uses: actions/checkout@v7.0.1
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Assumes the ingestion scripts live in ingestion/ and scripts/
-      # folders in the repo. Adjust the source paths if yours differ.
-      - name: Upload ingestion scripts to S3
-        run: |
-          aws s3 cp ingestion/kaggletos3zip.py \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/kaggletos3zip.py"
-          aws s3 cp scripts/geojson.py \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/geojson.py"
-          aws s3 cp scripts/convert_city_master.py \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_city_master.py"
-          aws s3 cp scripts/convert_wd1.py \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd1.py"
-          aws s3 cp scripts/convert_wd2.py \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd2.py"
-          aws s3 cp scripts/convert_wd3.py \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/convert_wd3.py"
-
-      # Bootstrap runs once per node at cluster launch: installs the
-      # Python deps the scripts need (not preinstalled on EMR), then
-      # pre-stages the raw Kaggle zip and the scripts themselves onto
-      # the master node under /home/hadoop, matching the LOCAL_ZIP /
-      # script paths each convert_*.py already hardcodes. It must be
-      # uploaded to S3 *before* create-cluster runs, since that command
-      # references it via --bootstrap-actions Path=...
-      - name: Upload bootstrap script to S3
-        run: |
-          aws s3 cp scripts/bootstrap.sh \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh"
-
-      # Fetches the raw Kaggle dataset and uploads the zip to S3 so the
-      # bootstrap action above has something to stage onto the master
-      # node before the ingestion steps run.
-      # boto3 isn't preinstalled on GitHub-hosted runners.
-      - name: Install Python dependencies for ingestion scripts
-        run: pip3 install boto3
-
-      - name: Download Kaggle dataset and upload raw ZIP to S3
-        run: |
-          echo "Disk space before download:"
-          df -h /
-          python3 ingestion/kaggletos3zip.py
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          S3_BUCKET: ${{ secrets.BRONZE_BUCKET }}
-          DATASET: mukeshdevrath007/indian-5000-cities-weather-data
-
-      # Step order matters: convert_wd3.py is the only script that
-      # deletes the local zip on cleanup, so it must run last. The
-      # others just read the zip the bootstrap action already staged.
-      - name: Create EMR cluster and submit ingestion steps
-        id: emr
-        run: |
-          # The shorthand --instance-groups syntax can't express EBS
-          # volumes, so build the instance group definitions as JSON
-          # instead. Each node (master + core) gets a single 100GB
-          # gp3 EBS volume, replacing EMR's default (much smaller)
-          # root volume -- this is what gives the cluster room for
-          # the staged scripts, the Kaggle zip, and any Hadoop/HDFS
-          # scratch space during the ingestion steps.
-          cat > instance-groups.json << EOF
-          [
-            {
-              "InstanceGroupType": "MASTER",
-              "InstanceCount": 1,
-              "InstanceType": "${{ secrets.EMR_MASTER_INSTANCE_TYPE }}",
-              "EbsConfiguration": {
-                "EbsBlockDeviceConfigs": [
-                  {
-                    "VolumeSpecification": {
-                      "VolumeType": "gp3",
-                      "SizeInGB": 100
-                    },
-                    "VolumesPerInstance": 1
-                  }
-                ],
-                "EbsOptimized": true
-              }
-            },
-            {
-              "InstanceGroupType": "CORE",
-              "InstanceCount": ${{ secrets.EMR_CORE_INSTANCE_COUNT }},
-              "InstanceType": "${{ secrets.EMR_CORE_INSTANCE_TYPE }}",
-              "EbsConfiguration": {
-                "EbsBlockDeviceConfigs": [
-                  {
-                    "VolumeSpecification": {
-                      "VolumeType": "gp3",
-                      "SizeInGB": 100
-                    },
-                    "VolumesPerInstance": 1
-                  }
-                ],
-                "EbsOptimized": true
-              }
-            }
-          ]
-          EOF
-
-          echo "Instance groups config:"
-          cat instance-groups.json
-
-          CLUSTER_ID=$(aws emr create-cluster \
-            --name "agri-weather-raw-to-bronze-${{ github.run_id }}" \
-            --release-label "${{ secrets.EMR_RELEASE_LABEL }}" \
-            --applications Name=Hadoop \
-            --service-role "${{ secrets.EMR_SERVICE_ROLE }}" \
-            --ec2-attributes InstanceProfile="${{ secrets.EMR_INSTANCE_PROFILE }}",SubnetId="${{ secrets.EMR_SUBNET_ID }}" \
-            --instance-groups file://instance-groups.json \
-            --ebs-root-volume-size 100 \
-            --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh",Args=["${{ secrets.BRONZE_BUCKET }}"] \
-            --log-uri "s3://${{ secrets.BRONZE_BUCKET }}/emr/logs/" \
-            --steps file://scripts/steps.json \
-            --auto-terminate \
-            --visible-to-all-users \
-            --query "ClusterId" \
-            --output text)
-
-          echo "cluster_id=$CLUSTER_ID" >> "$GITHUB_OUTPUT"
-          echo "Cluster launched: $CLUSTER_ID"
-
-      - name: Poll EMR cluster until terminated
-        run: |
-          CLUSTER_ID="${{ steps.emr.outputs.cluster_id }}"
-
-          while true; do
-            STATE=$(aws emr describe-cluster \
-              --cluster-id "$CLUSTER_ID" \
-              --query "Cluster.Status.State" \
-              --output text)
-
-            echo "EMR cluster state: $STATE"
-
-            if [ "$STATE" == "TERMINATED" ]; then
-              break
-            fi
-
-            if [ "$STATE" == "TERMINATED_WITH_ERRORS" ]; then
-              echo "EMR cluster terminated with errors."
-              exit 1
-            fi
-
-            sleep 30
-          done
-
-      # Cluster state alone doesn't tell you whether individual steps
-      # failed (a step can fail, get skipped, and the cluster still
-      # ends up "TERMINATED" cleanly). Explicitly check step statuses
-      # so a bad convert_*.py run doesn't silently pass through to Glue.
-      - name: Verify no EMR steps failed
-        run: |
-          CLUSTER_ID="${{ steps.emr.outputs.cluster_id }}"
-
-          FAILED=$(aws emr list-steps \
-            --cluster-id "$CLUSTER_ID" \
-            --step-states "FAILED" "CANCELLED" \
-            --query "Steps[].Id" \
-            --output text)
-
-          if [ -n "$FAILED" ]; then
-            echo "One or more EMR steps failed or were cancelled: $FAILED"
-            exit 1
-          fi
-
-          echo "All EMR steps completed successfully."
-
-  # ---------------------------------------------------------------------
-  # 2. Transform: Bronze -> Silver via AWS Glue
+  # 1. Transform: Bronze -> Silver via AWS Glue
   # ---------------------------------------------------------------------
   bronze-to-silver:
     name: AWS Glue (Bronze -> Silver)
 
-    needs: [terraform, ingest-emr]
+    needs: terraform
 
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # NOTE: filename/path now matches the file Terraform's
-      # aws_glue_job.bronze_to_silver.command.script_location expects:
-      # s3://<silver_bucket>/scripts/bronze_to_silver_glue.py
       - name: Upload latest script to S3
         run: |
-          aws s3 cp glue-scripts/bronze_to_silver_glue.py \
-            "s3://${{ secrets.SILVER_BUCKET }}/scripts/bronze_to_silver_glue.py"
+          aws s3 cp gluesilver/bronze_to_silver.py \
+            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/bronze_to_silver_glue.py"
 
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
@@ -357,7 +107,7 @@ jobs:
           done
 
   # ---------------------------------------------------------------------
-  # 3. Transform: Silver -> Gold via AWS Glue
+  # 2. Transform: Silver -> Gold via AWS Glue
   # ---------------------------------------------------------------------
   silver-to-gold:
     name: AWS Glue (Silver -> Gold)
@@ -368,23 +118,19 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # NOTE: filename/path now matches Terraform's
-      # aws_glue_job.silver_to_gold.command.script_location:
-      # s3://<gold_bucket>/scripts/silver_to_gold_glue.py
       - name: Upload latest script to S3
         run: |
-          aws s3 cp glue-scripts/silver_to_gold_glue.py \
-            "s3://${{ secrets.GOLD_BUCKET }}/scripts/silver_to_gold_glue.py"
+          aws s3 cp gluegold/silver_to_gold.py \
+            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/silver_to_gold.py"
 
       - name: Start Glue job (silver -> gold)
         id: glue_gold
