@@ -139,13 +139,7 @@ jobs:
               InstanceGroupType=CORE,InstanceCount="${{ secrets.EMR_CORE_INSTANCE_COUNT }}",InstanceType="${{ secrets.EMR_CORE_INSTANCE_TYPE }}" \
             --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh" \
             --log-uri "s3://${{ secrets.BRONZE_BUCKET }}/emr/logs/" \
-            --steps '[
-              {"Name":"geojson-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/geojson.py"]}},
-              {"Name":"city-master-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_city_master.py"]}},
-              {"Name":"wd1-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_wd1.py"]}},
-              {"Name":"wd2-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_wd2.py"]}},
-              {"Name":"wd3-ingest","ActionOnFailure":"TERMINATE_CLUSTER","HadoopJarStep":{"Jar":"command-runner.jar","Args":["python3","/home/hadoop/convert_wd3.py"]}}
-            ]' \
+            --steps file://scripts/steps.json \
             --auto-terminate \
             --visible-to-all-users \
             --query "ClusterId" \
