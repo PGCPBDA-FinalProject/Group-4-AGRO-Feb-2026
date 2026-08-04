@@ -17,7 +17,7 @@ set -euo pipefail
 # body below on `IS_MASTER`.
 # ---------------------------------------------------------------------
 
-BUCKET="$1"   # passed in via --bootstrap-actions Args=[...]
+BUCKET="agri-weather-dataset1"   # passed in via --bootstrap-actions Args=[...]
 LOCAL_DIR="/home/hadoop"
 
 if [ -z "${BUCKET:-}" ]; then
