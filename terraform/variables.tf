@@ -11,11 +11,11 @@ variable "bronze_bucket" {
 }
 
 variable "silver_bucket" {
-  default = "agro-weather-data-lake-silver1"
+  default = "agro-weather-data-lake-silver3"
 }
 
 variable "gold_bucket" {
-  default = "agro-weather-data-lake-gold1"
+  default = "agro-weather-data-lake-gold3"
 }
 
 variable "glue_assets_bucket" {
@@ -24,10 +24,10 @@ variable "glue_assets_bucket" {
 
 #declare a glue job name
 variable "glue_job_name" {
-  default = "glue-etl-job28"
+  default = "glue-etl-job32"
 }
 
 #declare a crawler name
 variable "glue_crawler_name" {
-  default = "my-etl-crawler28"
+  default = "my-etl-crawler32"
 }
