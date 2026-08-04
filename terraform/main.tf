@@ -2,15 +2,15 @@
 # Bronze bucket already exists (created by the ingestion scripts) —
 # reference it, don't try to (re)create it.
 # ---------------------------------------------------------------------
-data "aws_s3_bucket" "bronze_bucket" {
+resource "aws_s3_bucket" "bronze_bucket" {
   bucket = var.bucket_name_bronze
 }
 
-data "aws_s3_bucket" "silver_bucket" {
+resource "aws_s3_bucket" "silver_bucket" {
   bucket = var.bucket_name_silver
 }
 
-data "aws_s3_bucket" "gold_bucket" {
+resource "aws_s3_bucket" "gold_bucket" {
   bucket = var.bucket_name_gold
 }
 
