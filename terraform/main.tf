@@ -25,7 +25,7 @@ resource "aws_glue_job" "bronze_to_silver" {
   timeout           = 60
 
   command {
-    name            = "glueet"
+    name            = "glueetl"
     python_version  = "3"
     script_location = "s3://${var.bronze_bucket}/scripts/bronze_to_silver_glue.py"
   }
@@ -72,7 +72,7 @@ resource "aws_glue_job" "silver_to_gold" {
   timeout           = 60
 
   command {
-    name            = "glueet"
+    name            = "glueetl"
     python_version  = "3"
     script_location = "s3://${var.bronze_bucket}/scripts/silver_to_gold_glue.py"
   }
