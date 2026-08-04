@@ -74,7 +74,7 @@ resource "aws_glue_job" "silver_to_gold" {
   command {
     name            = "glueet"
     python_version  = "3"
-    script_location = "s3://${var.bronze_bucket}/scripts/bronze_to_silver_glue.py"
+    script_location = "s3://${var.glue_assets_bucket}/scripts/silver_to_gold_glue.py"
   }
 
   default_arguments = {
@@ -83,23 +83,11 @@ resource "aws_glue_job" "silver_to_gold" {
 
     "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
 
-    "--JOB_NAME" = "bronze_to_silver_transformation"
-
-    "--BRONZE_BUCKET" = "s3://${var.bronze_bucket}"
+    "--JOB_NAME" = "golden_layer"
 
     "--SILVER_BUCKET" = "s3://${var.silver_bucket}/silver"
 
-    "--CROP_DATA_INPUT_PATH" = "s3://${var.bronze_bucket}/crop/Custom_Crops_yield_Historical_Dataset.csv"
-
-    "--CROP_DATA_OUTPUT_PATH" = "s3://${var.silver_bucket}/silver/crop_data"
-
-    "--PERCENTAGE" = "0.30"
-
-    "--MIN_CITIES" = "15"
-
-    "--SEED" = "42"
-
-    "--additional-python-modules" = "geopandas,pyarrow,shapely,fiona,pyproj,rtree,s3fs"
+    "--GOLD_BUCKET" = "s3://${var.gold_bucket}/gold_updated"
   }
 
   execution_property {
@@ -115,7 +103,7 @@ resource "aws_glue_crawler" "etl_crawler" {
   database_name = aws_glue_catalog_database.etl_db.name
 
   s3_target {
-    path = "s3://${var.silver_bucket}/weatherdata/"
+    path = "s3://${var.gold_bucket}/gold_updated/"
   }
 
   depends_on = [
