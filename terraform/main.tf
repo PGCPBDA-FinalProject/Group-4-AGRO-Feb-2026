@@ -19,7 +19,7 @@ resource "aws_glue_job" "bronze_to_silver" {
   name     = "bronze_to_silver_transformation"
   role_arn = var.glue_role_arn
 
-  glue_version      = "5.0"
+  glue_version      = "5.1"
   worker_type       = "G.1X"
   number_of_workers = 10
   timeout           = 60
@@ -32,7 +32,7 @@ resource "aws_glue_job" "bronze_to_silver" {
 
   default_arguments = {
 
-    "--job-language" = "python"
+    "--job-language" = "python3"
 
     "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
 
@@ -52,7 +52,7 @@ resource "aws_glue_job" "bronze_to_silver" {
 
     "--SEED" = "42"
 
-    "--additional-python-modules" = "geopandas,pyarrow,shapely,fiona,pyproj,rtree,s3fs"
+    "--additional-python-modules" = "geopandas,pyarrow,shapely,fiona,pyproj,rtree,s3fs,pandas,numpy,boto3,scipy"
   }
 
   execution_property {
@@ -66,7 +66,7 @@ resource "aws_glue_job" "silver_to_gold" {
   name     = "golden_layer"
   role_arn = var.glue_role_arn
 
-  glue_version      = "5.0"
+  glue_version      = "5.1"
   worker_type       = "G.1X"
   number_of_workers = 10
   timeout           = 60
@@ -79,7 +79,7 @@ resource "aws_glue_job" "silver_to_gold" {
 
   default_arguments = {
 
-    "--job-language" = "python"
+    "--job-language" = "python3"
 
     "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
 
