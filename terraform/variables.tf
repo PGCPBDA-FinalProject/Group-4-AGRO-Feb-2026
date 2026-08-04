@@ -11,11 +11,11 @@ variable "bronze_bucket" {
 }
 
 variable "silver_bucket" {
-  default = "agro-weather-data-lake2"
+  default = "agro-weather-data-lake_silver"
 }
 
 variable "gold_bucket" {
-  default = "agro-weather-data-lake3"
+  default = "agro-weather-data-lake_gold"
 }
 
 variable "glue_assets_bucket" {
