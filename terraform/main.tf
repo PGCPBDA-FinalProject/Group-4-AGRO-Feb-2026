@@ -6,7 +6,7 @@ resource "aws_s3_bucket" "gold_bucket" {
 }
 
 resource "aws_glue_catalog_database" "etl_db" {
-  name = "weather_db30"
+  name = "weather_db31"
 }
 
 locals {
