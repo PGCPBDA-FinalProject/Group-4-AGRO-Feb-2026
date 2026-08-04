@@ -69,6 +69,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ubuntu-latest runners only expose ~14GB free by default; most
+      # of the disk is consumed by preinstalled tooling we don't need
+      # (Docker images, .NET, Android SDK, GHC/Haskell, etc). Clear it
+      # out before downloading the Kaggle dataset so we don't hit
+      # "No space left on device" mid-download.
+      - name: Free up disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h /
+
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo docker image prune -af || true
+
+          echo "Disk space after cleanup:"
+          df -h /
+
       - name: Checkout repo
         uses: actions/checkout@v7.0.1
 
@@ -118,6 +138,8 @@ jobs:
 
       - name: Download Kaggle dataset and upload raw ZIP to S3
         run: |
+          echo "Disk space before download:"
+          df -h /
           python3 ingestion/kaggletos3zip.py
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
@@ -131,15 +153,62 @@ jobs:
       - name: Create EMR cluster and submit ingestion steps
         id: emr
         run: |
+          # The shorthand --instance-groups syntax can't express EBS
+          # volumes, so build the instance group definitions as JSON
+          # instead. Each node (master + core) gets a single 100GB
+          # gp3 EBS volume, replacing EMR's default (much smaller)
+          # root volume -- this is what gives the cluster room for
+          # the staged scripts, the Kaggle zip, and any Hadoop/HDFS
+          # scratch space during the ingestion steps.
+          cat > instance-groups.json << EOF
+          [
+            {
+              "InstanceGroupType": "MASTER",
+              "InstanceCount": 1,
+              "InstanceType": "${{ secrets.EMR_MASTER_INSTANCE_TYPE }}",
+              "EbsConfiguration": {
+                "EbsBlockDeviceConfigs": [
+                  {
+                    "VolumeSpecification": {
+                      "VolumeType": "gp3",
+                      "SizeInGB": 100
+                    },
+                    "VolumesPerInstance": 1
+                  }
+                ],
+                "EbsOptimized": true
+              }
+            },
+            {
+              "InstanceGroupType": "CORE",
+              "InstanceCount": ${{ secrets.EMR_CORE_INSTANCE_COUNT }},
+              "InstanceType": "${{ secrets.EMR_CORE_INSTANCE_TYPE }}",
+              "EbsConfiguration": {
+                "EbsBlockDeviceConfigs": [
+                  {
+                    "VolumeSpecification": {
+                      "VolumeType": "gp3",
+                      "SizeInGB": 100
+                    },
+                    "VolumesPerInstance": 1
+                  }
+                ],
+                "EbsOptimized": true
+              }
+            }
+          ]
+          EOF
+
+          echo "Instance groups config:"
+          cat instance-groups.json
+
           CLUSTER_ID=$(aws emr create-cluster \
             --name "agri-weather-raw-to-bronze-${{ github.run_id }}" \
             --release-label "${{ secrets.EMR_RELEASE_LABEL }}" \
             --applications Name=Hadoop \
             --service-role "${{ secrets.EMR_SERVICE_ROLE }}" \
             --ec2-attributes InstanceProfile="${{ secrets.EMR_INSTANCE_PROFILE }}",SubnetId="${{ secrets.EMR_SUBNET_ID }}" \
-            --instance-groups \
-              InstanceGroupType=MASTER,InstanceCount=1,InstanceType="${{ secrets.EMR_MASTER_INSTANCE_TYPE }}" \
-              InstanceGroupType=CORE,InstanceCount="${{ secrets.EMR_CORE_INSTANCE_COUNT }}",InstanceType="${{ secrets.EMR_CORE_INSTANCE_TYPE }}" \
+            --instance-groups file://instance-groups.json \
             --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh",Args=["${{ secrets.BRONZE_BUCKET }}"] \
             --log-uri "s3://${{ secrets.BRONZE_BUCKET }}/emr/logs/" \
             --steps file://scripts/steps.json \
