@@ -32,7 +32,7 @@ resource "aws_glue_job" "bronze_to_silver" {
 
   default_arguments = {
 
-    "--job-language" = "python3"
+    "--job-language" = "python"
 
     "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
 
@@ -79,7 +79,7 @@ resource "aws_glue_job" "silver_to_gold" {
 
   default_arguments = {
 
-    "--job-language" = "python3"
+    "--job-language" = "python"
 
     "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
 
