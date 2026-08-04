@@ -74,7 +74,7 @@ jobs:
       - name: Upload latest script to S3
         run: |
           aws s3 cp gluesilver/bronze_to_silver_glue.py \
-            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/"
+            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/bronze_to_silver_glue.py"
 
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
@@ -136,7 +136,7 @@ jobs:
       - name: Upload latest script to S3
         run: |
           aws s3 cp gluegold/silver_to_gold_glue.py \
-            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/"
+            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/silver_to_gold_glue.py"
 
       - name: Start Glue job (silver -> gold)
         id: glue_gold
