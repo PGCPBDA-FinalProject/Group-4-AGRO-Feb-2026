@@ -66,7 +66,6 @@ jobs:
     name: EMR (Raw -> Bronze Ingestion)
     needs: [terraform]
 
-
     runs-on: ubuntu-latest
 
     steps:
@@ -81,8 +80,8 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Assumes the 5 ingestion scripts live in an emr-scripts/ folder
-      # in the repo. Adjust the source path if yours differ.
+      # Assumes the ingestion scripts live in ingestion/ and scripts/
+      # folders in the repo. Adjust the source paths if yours differ.
       - name: Upload ingestion scripts to S3
         run: |
           aws s3 cp ingestion/kaggletos3zip.py \
@@ -102,8 +101,29 @@ jobs:
       # Python deps the scripts need (not preinstalled on EMR), then
       # pre-stages the raw Kaggle zip and the scripts themselves onto
       # the master node under /home/hadoop, matching the LOCAL_ZIP /
-      # script paths each convert_*.py already hardcodes.
-      
+      # script paths each convert_*.py already hardcodes. It must be
+      # uploaded to S3 *before* create-cluster runs, since that command
+      # references it via --bootstrap-actions Path=...
+      - name: Upload bootstrap script to S3
+        run: |
+          aws s3 cp scripts/bootstrap.sh \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh"
+
+      # Fetches the raw Kaggle dataset and uploads the zip to S3 so the
+      # bootstrap action above has something to stage onto the master
+      # node before the ingestion steps run.
+      # boto3 isn't preinstalled on GitHub-hosted runners.
+      - name: Install Python dependencies for ingestion scripts
+        run: pip3 install boto3
+
+      - name: Download Kaggle dataset and upload raw ZIP to S3
+        run: |
+          python3 ingestion/kaggletos3zip.py
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          S3_BUCKET: ${{ secrets.BRONZE_BUCKET }}
+          DATASET: mukeshdevrath007/indian-5000-cities-weather-data
 
       # Step order matters: convert_wd3.py is the only script that
       # deletes the local zip on cleanup, so it must run last. The
@@ -120,7 +140,7 @@ jobs:
             --instance-groups \
               InstanceGroupType=MASTER,InstanceCount=1,InstanceType="${{ secrets.EMR_MASTER_INSTANCE_TYPE }}" \
               InstanceGroupType=CORE,InstanceCount="${{ secrets.EMR_CORE_INSTANCE_COUNT }}",InstanceType="${{ secrets.EMR_CORE_INSTANCE_TYPE }}" \
-            --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh" \
+            --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh",Args=["${{ secrets.BRONZE_BUCKET }}"] \
             --log-uri "s3://${{ secrets.BRONZE_BUCKET }}/emr/logs/" \
             --steps file://scripts/steps.json \
             --auto-terminate \
@@ -154,6 +174,27 @@ jobs:
 
             sleep 30
           done
+
+      # Cluster state alone doesn't tell you whether individual steps
+      # failed (a step can fail, get skipped, and the cluster still
+      # ends up "TERMINATED" cleanly). Explicitly check step statuses
+      # so a bad convert_*.py run doesn't silently pass through to Glue.
+      - name: Verify no EMR steps failed
+        run: |
+          CLUSTER_ID="${{ steps.emr.outputs.cluster_id }}"
+
+          FAILED=$(aws emr list-steps \
+            --cluster-id "$CLUSTER_ID" \
+            --step-states "FAILED" "CANCELLED" \
+            --query "Steps[].Id" \
+            --output text)
+
+          if [ -n "$FAILED" ]; then
+            echo "One or more EMR steps failed or were cancelled: $FAILED"
+            exit 1
+          fi
+
+          echo "All EMR steps completed successfully."
 
   # ---------------------------------------------------------------------
   # 2. Transform: Bronze -> Silver via AWS Glue
