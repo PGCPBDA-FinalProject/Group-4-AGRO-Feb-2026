@@ -1,4 +1,4 @@
-name: Medallion Data Pipeline (Bronze -> Silver -> Gold)
+name: Medallion Data Pipeline (Bronze -> Silver -> Gold -> Athena/SageMaker)
 
 on:
   workflow_dispatch:
@@ -35,18 +35,25 @@ jobs:
       # terraform tries and fails with a bare 403. If this step itself
       # fails or shows an unexpected account/ARN, the problem is IAM
       # permissions or wrong credentials -- not Terraform config.
+      #
+      # Non-blocking (|| true) on purpose: this step is diagnostic
+      # only. If it fails, terraform init below still runs and will
+      # surface its own error -- we don't want a diagnostic check to
+      # be the thing that kills the job before Terraform even tries.
       - name: Verify AWS identity and state bucket access
         run: |
           echo "Current AWS identity:"
           aws sts get-caller-identity
 
           echo "Checking bucket access:"
-          aws s3api head-bucket --bucket agro-weather-terraform-state-339712929234
+          aws s3api head-bucket --bucket agro-weather-terraform-state-654654400554 \
+            || echo "head-bucket failed - see error above (bucket may not exist yet, or wrong account/permissions)"
 
           echo "Checking state object access:"
           aws s3api head-object \
-            --bucket agro-weather-terraform-state-339712929234 \
-            --key agro-weather/terraform.tfstate || echo "head-object failed - see error above"
+            --bucket agro-weather-terraform-state-654654400554 \
+            --key agro-weather/terraform.tfstate \
+            || echo "head-object failed - see error above (expected on first-ever run, since no state file exists yet)"
 
       - name: Terraform Init
         working-directory: terraform
