@@ -14,7 +14,7 @@ data "aws_s3_bucket" "gold_bucket" {
   bucket = var.bucket_name_gold
 }
 
-data "aws_glue_catalog_database" "etl_db" {
+resource "aws_glue_catalog_database" "etl_db" {
   name = var.glue_database_name
 }
 
@@ -37,7 +37,7 @@ locals {
 # ---------------------------------------------------------------------
 # Glue Job: Bronze -> Silver
 # ---------------------------------------------------------------------
-data "aws_glue_job" "bronze_to_silver" {
+resource "aws_glue_job" "bronze_to_silver" {
   name     = var.glue_job_name_bronze_to_silver
   role_arn = local.glue_role_arn
 
@@ -72,7 +72,7 @@ data "aws_glue_job" "bronze_to_silver" {
 # ---------------------------------------------------------------------
 # Glue Job: Silver -> Gold
 # ---------------------------------------------------------------------
-data "aws_glue_job" "silver_to_gold" {
+resource "aws_glue_job" "silver_to_gold" {
   name     = var.glue_job_name_silver_to_gold
   role_arn = local.glue_role_arn
 
@@ -103,7 +103,7 @@ data "aws_glue_job" "silver_to_gold" {
 # (dim_region/, dim_state/, dim_city/, fact_weather/, fact_weather_sampled/,
 # crop_data/ all live directly under <silver_bucket>/silver/).
 # ---------------------------------------------------------------------
-data "aws_glue_crawler" "silver_crawler" {
+resource "aws_glue_crawler" "silver_crawler" {
   name          = var.glue_crawler_name_silver
   role          = local.glue_role_arn
   database_name = aws_glue_catalog_database.etl_db.name
@@ -121,7 +121,7 @@ data "aws_glue_crawler" "silver_crawler" {
 # season_shift/, renewable_ranking/, ml_dataset/, city_weather_profile/
 # all live (per silver_to_gold_glue.py's write_dataset() calls).
 # ---------------------------------------------------------------------
-data "aws_glue_crawler" "gold_crawler" {
+resource "aws_glue_crawler" "gold_crawler" {
   name          = var.glue_crawler_name_gold
   role          = local.glue_role_arn
   database_name = aws_glue_catalog_database.etl_db.name
