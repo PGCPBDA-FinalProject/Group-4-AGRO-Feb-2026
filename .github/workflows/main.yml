@@ -1,4 +1,4 @@
-name: Medallion Data Pipeline (Bronze -> Silver -> Gold -> Athena/SageMaker)
+name: Medallion Data Pipeline (Bronze -> Silver -> Gold)
 
 on:
   workflow_dispatch:
@@ -29,6 +29,24 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+
+      # Diagnostic: confirms which AWS identity is actually being used
+      # and whether it can reach the state bucket at all, BEFORE
+      # terraform tries and fails with a bare 403. If this step itself
+      # fails or shows an unexpected account/ARN, the problem is IAM
+      # permissions or wrong credentials -- not Terraform config.
+      - name: Verify AWS identity and state bucket access
+        run: |
+          echo "Current AWS identity:"
+          aws sts get-caller-identity
+
+          echo "Checking bucket access:"
+          aws s3api head-bucket --bucket agro-weather-terraform-state-339712929234
+
+          echo "Checking state object access:"
+          aws s3api head-object \
+            --bucket agro-weather-terraform-state-339712929234 \
+            --key agro-weather/terraform.tfstate || echo "head-object failed - see error above"
 
       - name: Terraform Init
         working-directory: terraform
@@ -209,6 +227,7 @@ jobs:
             --service-role "${{ secrets.EMR_SERVICE_ROLE }}" \
             --ec2-attributes InstanceProfile="${{ secrets.EMR_INSTANCE_PROFILE }}",SubnetId="${{ secrets.EMR_SUBNET_ID }}" \
             --instance-groups file://instance-groups.json \
+            --ebs-root-volume-size 100 \
             --bootstrap-actions Path="s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh",Args=["${{ secrets.BRONZE_BUCKET }}"] \
             --log-uri "s3://${{ secrets.BRONZE_BUCKET }}/emr/logs/" \
             --steps file://scripts/steps.json \

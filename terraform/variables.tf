@@ -16,19 +16,19 @@ variable "region" {
 variable "bucket_name_bronze" {
   description = "Existing S3 bucket holding raw/bronze data"
   type        = string
-  default     = "agri-weather-dataset2"
+  default     = "agri-weather-dataset-1"
 }
 
 variable "bucket_name_silver" {
   description = "S3 bucket for the Silver layer (managed by Terraform)"
   type        = string
-  default     = "agroweatherdatalake12"
+  default     = "agroweatherdatalake-123"
 }
 
 variable "bucket_name_gold" {
   description = "S3 bucket for the Gold layer (managed by Terraform)"
   type        = string
-  default     = "agroweatherdatalake21"
+  default     = "agroweatherdatalake-21"
 }
 
 # ---------------------------------------------------------------------

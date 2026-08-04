@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+set -x   # echo every command to bootstrap logs (stdout/stderr in S3 log-uri)
 
 # ---------------------------------------------------------------------
 # EMR Bootstrap: Raw -> Bronze ingestion prep
@@ -15,9 +16,14 @@ set -euo pipefail
 # NOTE: --bootstrap-actions runs on every node (master + core) by
 # default. If you only need this on the master node, gate the whole
 # body below on `IS_MASTER`.
+#
+# NOTE ON DISK SPACE: this writes to /home/hadoop, which lives on the
+# ROOT volume, not on any extra EbsConfiguration data volumes attached
+# via --instance-groups. The root volume size is controlled separately
+# via `--ebs-root-volume-size` on `aws emr create-cluster`.
 # ---------------------------------------------------------------------
 
-BUCKET="agri-weather-dataset1"   # passed in via --bootstrap-actions Args=[...]
+BUCKET="$1"   # passed in via --bootstrap-actions Args=[...]
 LOCAL_DIR="/home/hadoop"
 
 if [ -z "${BUCKET:-}" ]; then
@@ -34,6 +40,8 @@ if [ "$IS_MASTER" != "True" ]; then
 fi
 
 echo "Running bootstrap on master node..."
+echo "Disk space at start:"
+df -h /
 
 # --- 1. Install Python dependencies ---
 sudo pip3 install --upgrade pip
@@ -45,6 +53,9 @@ sudo pip3 install \
 # If geojson.py needs geospatial libs, uncomment:
 # sudo pip3 install geopandas shapely
 
+echo "Disk space after pip installs:"
+df -h /
+
 # --- 2. Download ingestion scripts from S3 ---
 mkdir -p "$LOCAL_DIR"
 
@@ -55,10 +66,16 @@ aws s3 cp "s3://${BUCKET}/emr/scripts/convert_wd1.py" "${LOCAL_DIR}/convert_wd1.
 aws s3 cp "s3://${BUCKET}/emr/scripts/convert_wd2.py" "${LOCAL_DIR}/convert_wd2.py"
 aws s3 cp "s3://${BUCKET}/emr/scripts/convert_wd3.py" "${LOCAL_DIR}/convert_wd3.py"
 
+echo "Disk space before zip download:"
+df -h /
+
 # --- 3. Stage the raw Kaggle zip locally ---
 # Adjust the S3 key/filename below to match what kaggletos3zip.py
 # actually names the uploaded zip.
 aws s3 cp "s3://${BUCKET}/raw/indian-5000-cities-weather-data.zip" \
   "${LOCAL_DIR}/indian-5000-cities-weather-data.zip"
+
+echo "Disk space after zip download:"
+df -h /
 
 echo "Bootstrap complete."
