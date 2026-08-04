@@ -1,6 +1,16 @@
 [
   {
     "Type": "CUSTOM_JAR",
+    "Name": "kaggletos3zip",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/kaggletos3zip.py"
+    ]
+  },
+  {
+    "Type": "CUSTOM_JAR",
     "Name": "geojson-ingest",
     "ActionOnFailure": "TERMINATE_CLUSTER",
     "Jar": "command-runner.jar",

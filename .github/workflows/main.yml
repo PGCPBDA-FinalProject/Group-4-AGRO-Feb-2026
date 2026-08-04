@@ -85,6 +85,8 @@ jobs:
       # in the repo. Adjust the source path if yours differ.
       - name: Upload ingestion scripts to S3
         run: |
+          aws s3 cp ingestion/kaggletos3zip.py \
+            "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/kaggletos3zip.py"
           aws s3 cp scripts/geojson.py \
             "s3://${{ secrets.BRONZE_BUCKET }}/emr/scripts/geojson.py"
           aws s3 cp scripts/convert_city_master.py \
@@ -101,26 +103,7 @@ jobs:
       # pre-stages the raw Kaggle zip and the scripts themselves onto
       # the master node under /home/hadoop, matching the LOCAL_ZIP /
       # script paths each convert_*.py already hardcodes.
-      - name: Upload bootstrap action to S3
-        run: |
-          cat > bootstrap.sh << 'EOF'
-          #!/bin/bash
-          set -euo pipefail
-
-          sudo python3 -m pip install --quiet boto3 pandas pyarrow requests
-
-          mkdir -p /home/hadoop/kaggle /home/hadoop/parquet /home/hadoop/temp
-
-          aws s3 cp "s3://__BRONZE_BUCKET__/raw/indian-5000-cities-weather-data.zip" \
-            /home/hadoop/kaggle/indian-5000-cities-weather-data.zip
-
-          aws s3 cp "s3://__BRONZE_BUCKET__/emr/scripts/" /home/hadoop/ --recursive
-          EOF
-
-          sed -i "s|__BRONZE_BUCKET__|${{ secrets.BRONZE_BUCKET }}|g" bootstrap.sh
-
-          aws s3 cp bootstrap.sh \
-            "s3://${{ secrets.BRONZE_BUCKET }}/emr/bootstrap/bootstrap.sh"
+      
 
       # Step order matters: convert_wd3.py is the only script that
       # deletes the local zip on cleanup, so it must run last. The
