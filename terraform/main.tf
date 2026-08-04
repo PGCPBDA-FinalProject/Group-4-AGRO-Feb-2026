@@ -1,8 +1,8 @@
 resource "aws_s3_bucket" "silver_bucket" {
-  bucket = var.bucket_name_silver
+  bucket = var.silver_bucket
 }
 resource "aws_s3_bucket" "gold_bucket" {
-  bucket = var.bucket_name_gold
+  bucket = var.gold_bucket
 }
 
 resource "aws_glue_catalog_database" "etl_db" {
@@ -15,32 +15,98 @@ locals {
 }
 
 resource "aws_glue_job" "bronze_to_silver" {
-  name     = "bronze-to-silver-job"
-  role_arn = local.glue_role_arn
 
-  command {
-    name            = "glueetl"
-    script_location = "s3://${var.bucket_name_silver}/scripts/bronze_to_silver.py"
-    python_version  = "3"
-  }
-
-  glue_version     = "5.0"
-  worker_type      = "G.1X"
-  number_of_workers = 2
-}
-resource "aws_glue_job" "silver_to_gold" {
-  name     = "silver-to-gold-job"
-  role_arn = local.glue_role_arn
-
-  command {
-    name            = "glueetl"
-    script_location = "s3://${var.bucket_name_gold}/scripts/silver_to_gold.py"
-    python_version  = "3"
-  }
+  name     = "bronze_to_silver_transformation"
+  role_arn = var.glue_role_arn
 
   glue_version      = "5.0"
   worker_type       = "G.1X"
-  number_of_workers = 2
+  number_of_workers = 10
+  timeout           = 60
+
+  command {
+    name            = "glueet"
+    python_version  = "3"
+    script_location = "s3://${var.glue_assets_bucket}/scripts/bronze_to_silver_glue.py"
+  }
+
+  default_arguments = {
+
+    "--job-language" = "python"
+
+    "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
+
+    "--JOB_NAME" = "bronze_to_silver_transformation"
+
+    "--BRONZE_BUCKET" = "s3://${var.bronze_bucket}"
+
+    "--SILVER_BUCKET" = "s3://${var.silver_bucket}/silver"
+
+    "--CROP_DATA_INPUT_PATH" = "s3://${var.bronze_bucket}/crop/Custom_Crops_yield_Historical_Dataset.csv"
+
+    "--CROP_DATA_OUTPUT_PATH" = "s3://${var.silver_bucket}/silver/crop_data"
+
+    "--PERCENTAGE" = "0.30"
+
+    "--MIN_CITIES" = "15"
+
+    "--SEED" = "42"
+
+    "--additional-python-modules" = ["geopandas","pyarrow","shapely","fiona","pyproj","rtree","s3fs","boto3","pandas","numpy","scipy","geopandas"]
+  }
+
+  execution_property {
+    max_concurrent_runs = 1
+  }
+
+  max_retries = 0
+}
+resource "aws_glue_job" "silver_to_gold" {
+
+  name     = "golden_layer"
+  role_arn = var.glue_role_arn
+
+  glue_version      = "5.0"
+  worker_type       = "G.1X"
+  number_of_workers = 10
+  timeout           = 60
+
+  command {
+    name            = "glueet"
+    python_version  = "3"
+    script_location = "s3://${var.bronze_bucket}/scripts/bronze_to_silver_glue.py"
+  }
+
+  default_arguments = {
+
+    "--job-language" = "python"
+
+    "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
+
+    "--JOB_NAME" = "bronze_to_silver_transformation"
+
+    "--BRONZE_BUCKET" = "s3://${var.bronze_bucket}"
+
+    "--SILVER_BUCKET" = "s3://${var.silver_bucket}/silver"
+
+    "--CROP_DATA_INPUT_PATH" = "s3://${var.bronze_bucket}/crop/Custom_Crops_yield_Historical_Dataset.csv"
+
+    "--CROP_DATA_OUTPUT_PATH" = "s3://${var.silver_bucket}/silver/crop_data"
+
+    "--PERCENTAGE" = "0.30"
+
+    "--MIN_CITIES" = "15"
+
+    "--SEED" = "42"
+
+    "--additional-python-modules" = ["geopandas","pyarrow","shapely","fiona","pyproj","rtree","s3fs","boto3","pandas","numpy","scipy","geopandas"]
+  }
+
+  execution_property {
+    max_concurrent_runs = 1
+  }
+
+  max_retries = 0
 }
 
 resource "aws_glue_crawler" "etl_crawler" {
@@ -49,7 +115,7 @@ resource "aws_glue_crawler" "etl_crawler" {
   database_name = aws_glue_catalog_database.etl_db.name
 
   s3_target {
-    path = "s3://${var.bucket_name_silver}/weatherdata/"
+    path = "s3://${var.silver_bucket}/weatherdata/"
   }
 
   depends_on = [
