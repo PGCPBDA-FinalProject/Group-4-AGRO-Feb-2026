@@ -52,7 +52,7 @@ resource "aws_glue_job" "bronze_to_silver" {
 
     "--SEED" = "42"
 
-    "--additional-python-modules" = ["geopandas","pyarrow","shapely","fiona","pyproj","rtree","s3fs","boto3","pandas","numpy","scipy","geopandas"]
+    "--additional-python-modules" = "geopandas,pyarrow,shapely,fiona,pyproj,rtree,s3fs"
   }
 
   execution_property {
@@ -99,7 +99,7 @@ resource "aws_glue_job" "silver_to_gold" {
 
     "--SEED" = "42"
 
-    "--additional-python-modules" = ["geopandas","pyarrow","shapely","fiona","pyproj","rtree","s3fs","boto3","pandas","numpy","scipy","geopandas"]
+    "--additional-python-modules" = "geopandas,pyarrow,shapely,fiona,pyproj,rtree,s3fs"
   }
 
   execution_property {
