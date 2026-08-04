@@ -64,6 +64,7 @@ jobs:
   # ---------------------------------------------------------------------
   ingest-emr:
     name: EMR (Raw -> Bronze Ingestion)
+    needs: [terraform]
 
 
     runs-on: ubuntu-latest
