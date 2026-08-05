@@ -1,7 +1,9 @@
-name: Medallion Data Pipeline (Bronze -> Silver -> Gold -> Athena/SageMaker)
+name: Medallion Data Pipeline (Bronze -> Silver -> Gold)
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -17,17 +19,18 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
 
       - name: Terraform Init
         working-directory: terraform
@@ -57,23 +60,26 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload latest script to S3
         run: |
-          aws s3 cp gluesilver/bronze_to_silver.py \
-            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/bronze_to_silver.py"
+          aws s3 cp gluesilver/bronze_to_silver_glue.py \
+              "s3://agro-weather-data-lake/scripts/bronze_to_silver_glue.py"
 
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
         run: |
+          sleep 15
+
           RUN_ID=$(aws glue start-job-run \
             --job-name "${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}" \
             --query "JobRunId" \
@@ -118,23 +124,26 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload latest script to S3
         run: |
-          aws s3 cp gluegold/silver_to_gold.py \
-            "${{ secrets.GLUE_SCRIPTS_S3_PATH }}/silver_to_gold.py"
+          aws s3 cp gluegold/silver_to_gold_glue.py \
+              "s3://agro-weather-data-lake/scripts/silver_to_gold_glue.py"
 
       - name: Start Glue job (silver -> gold)
         id: glue_gold
         run: |
+          sleep 15
+
           RUN_ID=$(aws glue start-job-run \
             --job-name "${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}" \
             --query "JobRunId" \
