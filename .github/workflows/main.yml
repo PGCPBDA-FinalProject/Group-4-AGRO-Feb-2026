@@ -1,0 +1,177 @@
+name: Medallion Data Pipeline (Bronze -> Silver -> Gold)
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+
+  # ---------------------------------------------------------------------
+  # 0. Deploy Infrastructure using Terraform
+  # ---------------------------------------------------------------------
+  terraform:
+    name: Terraform Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+  # ---------------------------------------------------------------------
+  # 1. Transform: Bronze -> Silver via AWS Glue
+  # ---------------------------------------------------------------------
+  bronze-to-silver:
+    name: AWS Glue (Bronze -> Silver)
+
+    needs: terraform
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload latest script to S3
+        run: |
+          aws s3 cp gluesilver/bronze_to_silver_glue.py \
+              "s3://agro-weather-data-lake/scripts/bronze_to_silver_glue.py"
+
+      - name: Start Glue job (bronze -> silver)
+        id: glue_silver
+        run: |
+          sleep 15
+
+          RUN_ID=$(aws glue start-job-run \
+            --job-name "${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}" \
+            --query "JobRunId" \
+            --output text)
+
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Poll Glue job until complete
+        run: |
+          JOB_NAME="${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}"
+          RUN_ID="${{ steps.glue_silver.outputs.run_id }}"
+
+          while true; do
+            STATE=$(aws glue get-job-run \
+              --job-name "$JOB_NAME" \
+              --run-id "$RUN_ID" \
+              --query "JobRun.JobRunState" \
+              --output text)
+
+            echo "Glue job state: $STATE"
+
+            if [ "$STATE" == "SUCCEEDED" ]; then
+              break
+            fi
+
+            if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+  # ---------------------------------------------------------------------
+  # 2. Transform: Silver -> Gold via AWS Glue
+  # ---------------------------------------------------------------------
+  silver-to-gold:
+    name: AWS Glue (Silver -> Gold)
+
+    needs: bronze-to-silver
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload latest script to S3
+        run: |
+          aws s3 cp gluegold/silver_to_gold_glue.py \
+              "s3://agro-weather-data-lake/scripts/silver_to_gold_glue.py"
+
+      - name: Start Glue job (silver -> gold)
+        id: glue_gold
+        run: |
+          sleep 15
+
+          RUN_ID=$(aws glue start-job-run \
+            --job-name "${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}" \
+            --query "JobRunId" \
+            --output text)
+
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Poll Glue job until complete
+        run: |
+          JOB_NAME="${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}"
+          RUN_ID="${{ steps.glue_gold.outputs.run_id }}"
+
+          while true; do
+            STATE=$(aws glue get-job-run \
+              --job-name "$JOB_NAME" \
+              --run-id "$RUN_ID" \
+              --query "JobRun.JobRunState" \
+              --output text)
+
+            echo "Glue job state: $STATE"
+
+            if [ "$STATE" == "SUCCEEDED" ]; then
+              break
+            fi
+
+            if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
+              exit 1
+            fi
+
+            sleep 30
+          done

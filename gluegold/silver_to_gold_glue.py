@@ -45,6 +45,7 @@ import logging
 import time
 
 from typing import Dict
+from typing import Dict
 
 from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
@@ -186,6 +187,7 @@ def configure_spark(spark):
 
 # ============================================================
 # REGION DEDUPLICATION
+# REGION DEDUPLICATION
 # ============================================================
 
 def deduplicate_regions(dim_region: DataFrame, dim_state: DataFrame):
@@ -264,6 +266,7 @@ def read_silver_tables(spark, silver_bucket):
         dim_city,
         dim_state,
         dim_region,
+        dim_region,
     )
 
 
@@ -277,6 +280,7 @@ def validate_inputs(fact_weather: DataFrame, label: str):
         "temperature_2m", "relative_humidity_2m",
         "precipitation", "rain",
         "pressure_msl", "cloud_cover",
+        "wind_speed_10m", "wind_speed_100m",
         "wind_speed_10m", "wind_speed_100m",
     ]
     missing = [c for c in required_columns if c not in fact_weather.columns]
@@ -337,7 +341,7 @@ def cleanup(*dfs):
 
 
 # ============================================================
-# STAR SCHEMA ENRICHMENT
+# STAR SCHEMA ENRICHMENT (IDs only)
 # ============================================================
 
 def build_star_schema(
@@ -346,6 +350,7 @@ def build_star_schema(
         dim_state: DataFrame,
 ) -> DataFrame:
     logger.info("=" * 70)
+    logger.info("STAR SCHEMA ENRICHMENT (ID-based)")
     logger.info("STAR SCHEMA ENRICHMENT (ID-based)")
     logger.info("=" * 70)
 
@@ -401,16 +406,20 @@ def validate_duplicate_columns(dataframe: DataFrame, label: str):
 
 # ============================================================
 # KEY MAPPING VALIDATION
+# KEY MAPPING VALIDATION
 # ============================================================
 
 def validate_key_mapping(dataframe: DataFrame, label: str) -> DataFrame:
     logger.info("=" * 70)
+    logger.info(f"KEY MAPPING VALIDATION [{label}]")
     logger.info(f"KEY MAPPING VALIDATION [{label}]")
     logger.info("=" * 70)
 
     null_state  = dataframe.filter(F.col("state_id").isNull()).count()
     null_region = dataframe.filter(F.col("region_id").isNull()).count()
 
+    logger.info(f"Rows missing state_id  : {null_state}")
+    logger.info(f"Rows missing region_id : {null_region}")
     logger.info(f"Rows missing state_id  : {null_state}")
     logger.info(f"Rows missing region_id : {null_region}")
 
@@ -448,6 +457,7 @@ def build_daily_weather(weather_enriched: DataFrame) -> DataFrame:
     daily_weather = (
         daily_weather
         .groupBy("city_id", "state_id", "region_id", "date")
+        .groupBy("city_id", "state_id", "region_id", "date")
         .agg(
             F.avg("temperature_2m").alias("avg_temperature_2m"),
             F.max("temperature_2m").alias("max_temperature_2m"),
@@ -479,6 +489,182 @@ def build_daily_weather(weather_enriched: DataFrame) -> DataFrame:
         f"(should be low thousands, not millions)"
     )
     return daily_weather
+
+
+# ============================================================
+# MONTHLY WEATHER DATASET (NEW - Power BI-facing table)
+# Rolled up from the corrected daily_weather. season_shift/ml_dataset
+# still use daily_weather directly, not this table.
+# ============================================================
+
+def build_monthly_weather(daily_weather: DataFrame) -> DataFrame:
+
+    logger.info("=" * 70)
+    logger.info("BUILD MONTHLY WEATHER")
+    logger.info("=" * 70)
+
+    monthly_weather = (
+        daily_weather
+        .groupBy("city_id", "state_id", "region_id", "year", "month")
+        .agg(
+            F.avg("avg_temperature_2m").alias("avg_temperature_2m"),
+            F.max("max_temperature_2m").alias("max_temperature_2m"),
+            F.min("min_temperature_2m").alias("min_temperature_2m"),
+            F.avg("avg_humidity").alias("avg_humidity"),
+            F.sum("daily_precipitation").alias("monthly_precipitation"),
+            F.sum("daily_rain").alias("monthly_rain"),
+            F.avg("avg_pressure_msl").alias("avg_pressure_msl"),
+            F.avg("avg_cloud_cover").alias("avg_cloud_cover"),
+            F.avg("avg_wind_speed_10m").alias("avg_wind_speed_10m"),
+            F.avg("avg_wind_speed_100m").alias("avg_wind_speed_100m"),
+            F.max("max_wind_speed_10m").alias("max_wind_speed_10m"),
+            F.max("max_wind_speed_100m").alias("max_wind_speed_100m"),
+            F.countDistinct("date").alias("days_observed"),
+        )
+        .withColumn(
+            "year_month",
+            (F.col("year") * F.lit(100) + F.col("month")).cast("int")
+        )
+        .withColumn("quarter", F.ceil(F.col("month") / F.lit(3)).cast("int"))
+    )
+
+    monthly_weather.persist(StorageLevel.MEMORY_AND_DISK)
+    logger.info(f"Monthly Weather Records : {monthly_weather.count():,}")
+    logger.info(
+        f"Distinct cities in Monthly Weather : "
+        f"{monthly_weather.select('city_id').distinct().count():,}"
+    )
+
+    return monthly_weather
+
+
+# ============================================================
+# DIM_DATE (daily) / DIM_MONTH / DIM_YEAR
+# Shared, conformed date dimensions written ONCE to gold_updated/dims/
+# ============================================================
+
+def build_dim_date(daily_weather: DataFrame, daily_weather_full: DataFrame) -> DataFrame:
+
+    logger.info("=" * 70)
+    logger.info("BUILD DIM_DATE")
+    logger.info("=" * 70)
+
+    dates_df = (
+        daily_weather.select("date")
+        .union(daily_weather_full.select("date"))
+        .distinct()
+    )
+
+    dim_date = (
+        dates_df
+        .withColumn("year", F.year("date"))
+        .withColumn("month", F.month("date"))
+        .withColumn("day", F.dayofmonth("date"))
+        .withColumn("quarter", F.quarter("date"))
+        .withColumn("week", F.weekofyear("date"))
+        .withColumn("day_of_week", F.dayofweek("date"))
+        .withColumn("day_name", F.date_format("date", "EEEE"))
+        .withColumn("month_name", F.date_format("date", "MMMM"))
+        .withColumn(
+            "is_weekend",
+            F.when(F.dayofweek("date").isin(1, 7), 1).otherwise(0)
+        )
+        .withColumn(
+            "year_month",
+            (F.col("year") * F.lit(100) + F.col("month")).cast("int")
+        )
+        .orderBy("date")
+    )
+
+    dim_date.persist(StorageLevel.MEMORY_AND_DISK)
+    logger.info(f"dim_date Records : {dim_date.count():,}")
+
+    return dim_date
+
+
+def build_dim_month(dim_date: DataFrame) -> DataFrame:
+
+    logger.info("=" * 70)
+    logger.info("BUILD DIM_MONTH")
+    logger.info("=" * 70)
+
+    dim_month = (
+        dim_date
+        .select("year", "month", "year_month", "month_name", "quarter")
+        .distinct()
+        .orderBy("year_month")
+    )
+
+    dim_month.persist(StorageLevel.MEMORY_AND_DISK)
+    logger.info(f"dim_month Records : {dim_month.count():,}")
+
+    return dim_month
+
+
+def build_dim_year(dim_month: DataFrame) -> DataFrame:
+
+    logger.info("=" * 70)
+    logger.info("BUILD DIM_YEAR")
+    logger.info("=" * 70)
+
+    dim_year = (
+        dim_month
+        .select("year")
+        .distinct()
+        .orderBy("year")
+    )
+
+    dim_year.persist(StorageLevel.MEMORY_AND_DISK)
+    logger.info(f"dim_year Records : {dim_year.count():,}")
+
+    return dim_year
+
+
+# ============================================================
+# SCORE HELPERS (used by Season Shift)
+# ============================================================
+
+def _range_score(col, lo, hi, penalty_per_unit=8.0):
+    return F.when(
+        col.between(lo, hi), F.lit(100.0)
+    ).otherwise(
+        F.greatest(
+            F.lit(0.0),
+            F.lit(100.0) -
+            F.least(F.abs(col - lo), F.abs(col - hi)) * F.lit(penalty_per_unit)
+        )
+    )
+
+
+def _rain_floor_score(col, minimum, penalty_per_unit=40.0):
+    return F.when(
+        col >= minimum, F.lit(100.0)
+    ).otherwise(
+        F.greatest(
+            F.lit(0.0),
+            F.lit(100.0) - (F.lit(minimum) - col) * F.lit(penalty_per_unit)
+        )
+    )
+
+
+def _date_bounds(season_name, year_col, thresholds):
+    """Builds real calendar-date start/end columns for a season's
+    onset window, for a given row's year. None of the configured
+    windows cross a year boundary, so this is a plain same-year
+    comparison."""
+    t = thresholds[season_name]
+    sm, sd = t["window_start"]
+    em, ed = t["window_end"]
+
+    start = F.to_date(F.concat_ws(
+        "-", year_col.cast("string"),
+        F.lpad(F.lit(str(sm)), 2, "0"), F.lpad(F.lit(str(sd)), 2, "0")
+    ))
+    end = F.to_date(F.concat_ws(
+        "-", year_col.cast("string"),
+        F.lpad(F.lit(str(em)), 2, "0"), F.lpad(F.lit(str(ed)), 2, "0")
+    ))
+    return start, end
 
 
 # ============================================================
@@ -723,6 +909,7 @@ def build_season_shift(daily_weather: DataFrame) -> DataFrame:
             F.avg("daily_rain").alias("avg_rainfall"),
             F.avg("avg_humidity").alias("avg_humidity"),
             F.first("A_expected_start").alias("official_start_date"),
+            F.first("A_expected_start").alias("official_start_date"),
         )
         .join(
             onset_candidates.select(
@@ -902,6 +1089,7 @@ def build_renewable_ranking(daily_weather: DataFrame) -> DataFrame:
     renewable_summary = (
         renewable_df
         .groupBy("region_id", "state_id", "city_id")
+        .groupBy("region_id", "state_id", "city_id")
         .agg(
             F.avg("avg_wind_speed_10m").alias("avg_wind_speed_10m"),
             F.avg("avg_wind_speed_100m").alias("avg_wind_speed_100m"),
@@ -1047,6 +1235,7 @@ def build_city_profile(daily_weather: DataFrame) -> DataFrame:
     city_profile = (
         daily_weather
         .groupBy("region_id", "state_id", "city_id")
+        .groupBy("region_id", "state_id", "city_id")
         .agg(
             F.avg("avg_temperature_2m").alias("avg_temperature"),
             F.avg("avg_humidity").alias("avg_humidity"),
@@ -1119,6 +1308,7 @@ def main():
         dim_city,
         dim_state,
         dim_region,
+        dim_region,
     ) = read_silver_tables(spark, args["SILVER_BUCKET"])
 
     dim_region_clean, dim_state_clean = deduplicate_regions(
@@ -1130,6 +1320,7 @@ def main():
 
     # ── SAMPLED PATH ─────────────────────────────────────────
     weather_sampled = build_star_schema(
+        fact_weather_sampled, dim_city, dim_state_clean
         fact_weather_sampled, dim_city, dim_state_clean
     )
     validate_duplicate_columns(weather_sampled, "weather_sampled")
@@ -1145,6 +1336,7 @@ def main():
 
     # ── FULL PATH ─────────────────────────────────────────────
     weather_full = build_star_schema(
+        fact_weather_full, dim_city, dim_state_clean
         fact_weather_full, dim_city, dim_state_clean
     )
     validate_duplicate_columns(weather_full, "weather_full")
@@ -1181,9 +1373,15 @@ def main():
         dim_date, dim_month, dim_year, gold_bucket
     )
 
+    write_dimension_tables(
+        dim_city, dim_state_clean, dim_region_clean,
+        dim_date, dim_month, dim_year, gold_bucket
+    )
+
     write_dataset(
         daily_weather,
         f"{gold_bucket}/daily_weather/fact_daily_weather",
+        partition_columns="state_id"
         partition_columns="state_id"
     )
     write_dataset(
@@ -1203,6 +1401,7 @@ def main():
         ml_dataset,
         f"{gold_bucket}/ml_dataset/fact_ml_dataset",
         partition_columns="state_id"
+        partition_columns="state_id"
     )
     write_dataset(
         city_profile,
@@ -1212,6 +1411,8 @@ def main():
     cleanup(
         dim_city, dim_state, dim_region,
         weather_sampled, weather_full,
+        daily_weather, daily_weather_full, monthly_weather,
+        dim_date, dim_month, dim_year,
         daily_weather, daily_weather_full, monthly_weather,
         dim_date, dim_month, dim_year,
         season_shift, renewable_ranking,
