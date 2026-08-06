@@ -1,13 +1,35 @@
+import boto3
 import zipfile
 import pandas as pd
 import os
 
-ZIP_PATH = "/home/hadoop/archive.zip"
+# ==========================
+# CONFIGURATION
+# ==========================
+
+BUCKET = "agri-weather-dataset1"
+ZIP_KEY = "raw/indian-5000-cities-weather-data.zip"
+
+LOCAL_ZIP = "/home/hadoop/kaggle/indian-5000-cities-weather-data.zip"
+
 OUTPUT_PATH = "/home/hadoop/parquet/city_master"
 
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 
-with zipfile.ZipFile(ZIP_PATH, "r") as z:
+# ==========================
+# DOWNLOAD ZIP FROM S3
+# ==========================
+
+s3 = boto3.client("s3")
+
+print("Downloading ZIP...")
+
+
+# ==========================
+# READ FILE INSIDE ZIP
+# ==========================
+
+with zipfile.ZipFile(LOCAL_ZIP, "r") as z:
 
     with z.open(
         "Weather_Data_Scraping_and_Analysis/weather.csv"
@@ -15,7 +37,12 @@ with zipfile.ZipFile(ZIP_PATH, "r") as z:
 
         df = pd.read_csv(f)
 
-df.drop(columns=["Unnamed: 0"], inplace=True)
+if "Unnamed: 0" in df.columns:
+    df.drop(columns=["Unnamed: 0"], inplace=True)
+
+# ==========================
+# WRITE PARQUET
+# ==========================
 
 output_file = os.path.join(
     OUTPUT_PATH,
@@ -30,3 +57,24 @@ df.to_parquet(
 )
 
 print("city_master.parquet created successfully")
+
+# ==========================
+# UPLOAD PARQUET TO S3
+# ==========================
+
+s3.upload_file(
+    output_file,
+    BUCKET,
+    "bronze/city_master/city_master.parquet"
+)
+
+print("Uploaded to S3")
+
+# ==========================
+# CLEANUP
+# ==========================
+
+os.remove(output_file)
+
+
+print("Temporary files deleted")

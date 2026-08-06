@@ -1,0 +1,62 @@
+[
+  {
+    "Type": "CUSTOM_JAR",
+    "Name": "kaggletos3zip",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/kaggletos3zip.py"
+    ]
+  },
+  {
+    "Type": "CUSTOM_JAR",
+    "Name": "geojson-ingest",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/geojson.py"
+    ]
+  },
+  {
+    "Type": "CUSTOM_JAR",
+    "Name": "city-master-ingest",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/convert_city_master.py"
+    ]
+  },
+  {
+    "Type": "CUSTOM_JAR",
+    "Name": "wd1-ingest",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/convert_wd1.py"
+    ]
+  },
+  {
+    "Type": "CUSTOM_JAR",
+    "Name": "wd2-ingest",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/convert_wd2.py"
+    ]
+  },
+  {
+    "Type": "CUSTOM_JAR",
+    "Name": "wd3-ingest",
+    "ActionOnFailure": "TERMINATE_CLUSTER",
+    "Jar": "command-runner.jar",
+    "Args": [
+      "python3",
+      "/home/hadoop/convert_wd3.py"
+    ]
+  }
+]

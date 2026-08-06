@@ -1,16 +1,46 @@
+import boto3
 import zipfile
 import pandas as pd
 import os
 import time
 
-ZIP_PATH = "/home/hadoop/archive.zip"
-OUTPUT_PATH = "/home/hadoop/parquet/w_d_3"
+# ===========================
+# CONFIGURATION
+# ===========================
 
-os.makedirs(OUTPUT_PATH, exist_ok=True)
+BUCKET = "agri-weather-dataset1"
+
+ZIP_KEY = "raw/indian-5000-cities-weather-data.zip"
+
+LOCAL_ZIP = "/home/hadoop/kaggle/indian-5000-cities-weather-data.zip"
+
+TEMP_DIR = "/home/hadoop/temp"
+
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 start = time.time()
 
-with zipfile.ZipFile(ZIP_PATH, "r") as z:
+# ===========================
+# DOWNLOAD ZIP
+# ===========================
+
+s3 = boto3.client("s3")
+
+print("Downloading ZIP from S3...")
+
+s3.download_file(
+    BUCKET,
+    ZIP_KEY,
+    LOCAL_ZIP
+)
+
+print("Download Completed")
+
+# ===========================
+# OPEN ZIP
+# ===========================
+
+with zipfile.ZipFile(LOCAL_ZIP, "r") as z:
 
     csv_files = [
         f for f in z.namelist()
@@ -20,28 +50,74 @@ with zipfile.ZipFile(ZIP_PATH, "r") as z:
 
     print("Total Files:", len(csv_files))
 
-    for i, file in enumerate(csv_files, start=1):
+    for i, member in enumerate(csv_files, start=1):
 
-        city = os.path.basename(file).replace(".csv", "")
+        city = os.path.basename(member).replace(".csv", "")
 
         print(f"[{i}/{len(csv_files)}] {city}")
 
-        with z.open(file) as f:
-            df = pd.read_csv(f, encoding="utf-8-sig")
-        df.drop(columns=["Unnamed: 0"], inplace=True)
-        df["city"] = city
+        # -----------------------
+        # Extract only one file
+        # -----------------------
 
-        output_file = os.path.join(
-            OUTPUT_PATH,
-            city + ".parquet"
+        extracted_path = z.extract(
+            member,
+            TEMP_DIR
         )
 
+        # -----------------------
+        # Read CSV
+        # -----------------------
+
+        df = pd.read_csv(
+            extracted_path,
+            encoding="utf-8-sig"
+        )
+
+        if "Unnamed: 0" in df.columns:
+            df.drop(
+                columns=["Unnamed: 0"],
+                inplace=True
+            )
+
+        df["city"] = city
+
+        parquet_file = f"/home/hadoop/{city}.parquet"
+
         df.to_parquet(
-            output_file,
+            parquet_file,
             engine="pyarrow",
             compression="snappy",
             index=False
         )
 
-print("WD3 Completed")
-print("Time:", round((time.time()-start)/60,2), "minutes")
+        # -----------------------
+        # Upload to S3
+        # -----------------------
+
+        s3.upload_file(
+            parquet_file,
+            BUCKET,
+            f"bronze/wd3/{city}.parquet"
+        )
+
+        # -----------------------
+        # Delete temporary files
+        # -----------------------
+
+        os.remove(parquet_file)
+        os.remove(extracted_path)
+
+# ===========================
+# CLEANUP
+# ===========================
+
+os.remove(LOCAL_ZIP)
+
+print("Completed")
+
+print(
+    "Time:",
+    round((time.time()-start)/60,2),
+    "minutes"
+)

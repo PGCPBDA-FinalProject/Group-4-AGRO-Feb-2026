@@ -2,7 +2,7 @@ output "bronze_job_name" {
   value = aws_glue_job.bronze_to_silver.name
 }
 
-output "silver_job_name" {
+output "gold_job_name" {
   value = aws_glue_job.silver_to_gold.name
 }
 
