@@ -1,9 +1,8 @@
 name: Medallion Data Pipeline (Ingest -> Bronze -> Silver -> Gold -> Crawler -> Athena)
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
