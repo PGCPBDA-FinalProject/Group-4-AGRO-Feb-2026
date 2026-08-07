@@ -7,15 +7,15 @@ variable "glue_role_arn" {
 }
 
 variable "bronze_bucket" {
-  default = "agro-weather-data-lake"
+  default = "agro-weather-data-lake-final"
 }
 
 variable "silver_bucket" {
-  default = "agro-weather-data-lake-silver3"
+  default = "agro-weather-data-lake-silver3-final"
 }
 
 variable "gold_bucket" {
-  default = "agro-weather-data-lake-gold3"
+  default = "agro-weather-data-lake-gold3-final"
 }
 
 variable "glue_assets_bucket" {
