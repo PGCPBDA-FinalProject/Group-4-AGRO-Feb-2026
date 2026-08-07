@@ -22,12 +22,13 @@ resource "aws_glue_job" "weather_ingestion" {
   name     = "weather_ingestion_bronze"
   role_arn = var.glue_role_arn
 
-  glue_version   = "3.0"
-  max_capacity   = 1
-  timeout        = 180
+  glue_version      = "5.1"
+  worker_type       = "G.1X"
+  number_of_workers = 10
+  timeout           = 180
 
   command {
-    name            = "pythonshell"
+    name            = "glueetl"
     python_version  = "3.9"
     script_location = "s3://${var.bronze_bucket}/scripts/glue_weather.py"
   }
@@ -65,12 +66,13 @@ resource "aws_glue_job" "crop_geojson_ingestion" {
   name     = "crop_geojson_ingestion_bronze"
   role_arn = var.glue_role_arn
 
-  glue_version   = "3.0"
-  max_capacity   = 1
-  timeout        = 60
+  glue_version      = "5.1"
+  worker_type       = "G.1X"
+  number_of_workers = 10
+  timeout           = 180
 
   command {
-    name            = "pythonshell"
+    name            = "glueetl"
     python_version  = "3.9"
     script_location = "s3://${var.bronze_bucket}/scripts/glue_crop.py"
   }
