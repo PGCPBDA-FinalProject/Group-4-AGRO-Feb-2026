@@ -172,6 +172,6 @@ jobs:
             if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
               exit 1
             fi
-
+ 
             sleep 30
           done
