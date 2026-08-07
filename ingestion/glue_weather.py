@@ -73,11 +73,11 @@ logger = logging.getLogger("WeatherIngestionGlue")
 # Manager instead. Placeholders below are intentionally blank.
 DEFAULT_ARGS = {
     'S3_BUCKET': 'agro-weather-data-lake-final',
-    'S3_PREFIX': '',
+    'S3_PREFIX': 'bronze',
     'DATASET_NAME': 'mukeshdevrath007/indian-5000-cities-weather-data',
     'CHUNK_SIZE': '100000',
-    'KAGGLE_USERNAME': '',
-    'KAGGLE_KEY': ''
+    'KAGGLE_USERNAME': 'gawandek149',
+    'KAGGLE_KEY': 'KGAT_4be03b4c9a339b3f03411bd8817b2366'
 }
  
 options = DEFAULT_ARGS.copy()

@@ -68,7 +68,7 @@ resource "aws_glue_job" "crop_geojson_ingestion" {
 
   glue_version      = "5.1"
   worker_type       = "G.1X"
-  number_of_workers = 10
+  number_of_workers = 2
   timeout           = 180
 
   command {
