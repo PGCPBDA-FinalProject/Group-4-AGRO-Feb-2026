@@ -111,10 +111,10 @@ jobs:
 
       - name: Upload ingestion scripts to S3
         run: |
-          aws s3 cp glue/glue_weather.py \
-              "s3://agro-weather-data-lake/scripts/glue_weather.py"
-          aws s3 cp glue/glue_crop.py \
-              "s3://agro-weather-data-lake/scripts/glue_crop.py"
+          aws s3 cp ingestion/glue_weather.py \
+              "s3://agro-weather-data-lake-final/scripts/glue_weather.py"
+          aws s3 cp ingestion/glue_crop.py \
+              "s3://agro-weather-data-lake-final/scripts/glue_crop.py"
 
       - name: Start weather ingestion Glue job
         id: glue_weather
@@ -211,7 +211,7 @@ jobs:
       - name: Upload latest script to S3
         run: |
           aws s3 cp gluesilver/bronze_to_silver_glue.py \
-              "s3://agro-weather-data-lake/scripts/bronze_to_silver_glue.py"
+              "s3://agro-weather-data-lake-final/scripts/bronze_to_silver_glue.py"
 
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
@@ -275,7 +275,7 @@ jobs:
       - name: Upload latest script to S3
         run: |
           aws s3 cp gluegold/silver_to_gold_glue.py \
-              "s3://agro-weather-data-lake/scripts/silver_to_gold_glue.py"
+              "s3://agro-weather-data-lake-final/scripts/silver_to_gold_glue.py"
 
       - name: Start Glue job (silver -> gold)
         id: glue_gold
