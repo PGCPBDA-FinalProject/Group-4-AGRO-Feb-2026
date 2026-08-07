@@ -1,8 +1,9 @@
 name: Medallion Data Pipeline (Ingest -> Bronze -> Silver -> Gold -> Crawler -> Athena)
 
 on:
-  workflow_dispatch:
-    
+  push:
+    branches:
+      - main
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -28,12 +29,46 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Ensure Terraform state bucket exists
+        id: state_bucket
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="terraform-state-${ACCOUNT_ID}"
+          echo "Current AWS account: $ACCOUNT_ID"
+          echo "State bucket: $BUCKET"
+
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "State bucket already exists and is accessible."
+          else
+            echo "State bucket missing or inaccessible under this account. Creating it..."
+            aws s3api create-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
+            aws s3api put-bucket-versioning --bucket "$BUCKET" \
+              --versioning-configuration Status=Enabled
+          fi
+
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
 
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: |
+            terraform/.terraform
+            ~/.terraform.d/plugin-cache
+          key: terraform-providers-${{ runner.os }}-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-providers-${{ runner.os }}-
+
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init
+        env:
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ steps.state_bucket.outputs.bucket }}" \
+            -reconfigure
 
       - name: Terraform Validate
         working-directory: terraform
