@@ -1,3 +1,6 @@
+resource "aws_s3_bucket" "bronze_bucket" {
+  bucket = var.bronze_bucket
+}
 resource "aws_s3_bucket" "silver_bucket" {
   bucket = var.silver_bucket
 }
@@ -12,6 +15,94 @@ resource "aws_glue_catalog_database" "etl_db" {
 locals {
   glue_role_arn  = var.glue_role_arn
   glue_role_name = element(split("/", var.glue_role_arn), length(split("/", var.glue_role_arn)) - 1)
+}
+
+resource "aws_glue_job" "weather_ingestion" {
+
+  name     = "weather_ingestion_bronze"
+  role_arn = var.glue_role_arn
+
+  glue_version   = "3.0"
+  max_capacity   = 1
+  timeout        = 180
+
+  command {
+    name            = "pythonshell"
+    python_version  = "3.9"
+    script_location = "s3://${var.bronze_bucket}/scripts/glue_weather.py"
+  }
+
+  default_arguments = {
+
+    "--job-language" = "python"
+
+    "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
+
+    "--S3_BUCKET" = var.bronze_bucket
+
+    "--S3_PREFIX" = ""
+
+    "--DATASET_NAME" = var.weather_dataset_name
+
+    "--CHUNK_SIZE" = "100000"
+
+    "--KAGGLE_USERNAME" = var.kaggle_username
+
+    "--KAGGLE_KEY" = var.kaggle_key
+
+    "--additional-python-modules" = "pandas,pyarrow,requests,kaggle,boto3"
+  }
+
+  execution_property {
+    max_concurrent_runs = 1
+  }
+
+  max_retries = 0
+}
+
+resource "aws_glue_job" "crop_geojson_ingestion" {
+
+  name     = "crop_geojson_ingestion_bronze"
+  role_arn = var.glue_role_arn
+
+  glue_version   = "3.0"
+  max_capacity   = 1
+  timeout        = 60
+
+  command {
+    name            = "pythonshell"
+    python_version  = "3.9"
+    script_location = "s3://${var.bronze_bucket}/scripts/glue_crop.py"
+  }
+
+  default_arguments = {
+
+    "--job-language" = "python"
+
+    "--TempDir" = "s3://${var.glue_assets_bucket}/temporary/"
+
+    "--S3_BUCKET" = var.bronze_bucket
+
+    "--S3_PREFIX" = "crop/indian-historical-crop-yield-and-weather-data"
+
+    "--DATASET_NAME" = var.crop_dataset_name
+
+    "--KAGGLE_USERNAME" = var.kaggle_username
+
+    "--KAGGLE_KEY" = var.kaggle_key
+
+    "--GEOJSON_URL" = "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson"
+
+    "--GEOJSON_S3_PREFIX" = "geojson"
+
+    "--additional-python-modules" = "requests,kaggle,boto3"
+  }
+
+  execution_property {
+    max_concurrent_runs = 1
+  }
+
+  max_retries = 0
 }
 
 resource "aws_glue_job" "bronze_to_silver" {
@@ -107,7 +198,29 @@ resource "aws_glue_crawler" "etl_crawler" {
   }
 
   depends_on = [
+  aws_glue_job.weather_ingestion,
+  aws_glue_job.crop_geojson_ingestion,
   aws_glue_job.bronze_to_silver,
   aws_glue_job.silver_to_gold
 ]
+}
+  
+  
+resource "aws_s3_bucket" "athena_results_bucket" {
+  bucket = var.athena_results_bucket
+}
+
+resource "aws_athena_workgroup" "etl_workgroup" {
+  name = var.athena_workgroup_name
+
+  configuration {
+    enforce_workgroup_configuration    = true
+    publish_cloudwatch_metrics_enabled = true
+
+    result_configuration {
+      output_location = "s3://${var.athena_results_bucket}/query-results/"
+    }
+  }
+
+  depends_on = [aws_s3_bucket.athena_results_bucket]
 }

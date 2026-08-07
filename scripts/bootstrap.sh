@@ -45,10 +45,7 @@ df -h /
 
 # --- 1. Install Python dependencies ---
 sudo pip3 install --upgrade pip
-sudo pip3 install \
-  pandas \
-  boto3 \
-  requests
+sudo pip3 install pandas boto3 requests
 
 # If geojson.py needs geospatial libs, uncomment:
 # sudo pip3 install geopandas shapely
