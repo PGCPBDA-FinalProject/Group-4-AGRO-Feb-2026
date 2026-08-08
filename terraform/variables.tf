@@ -33,7 +33,7 @@ variable "glue_crawler_name" {
 }
 #declare athena results bucket
 variable "athena_results_bucket" {
-  default = "agro-weather-data-lake-athena-results3"
+  default = "agro-weather-data-lake-athena-results-fi"
 }
 
 #declare athena workgroup name
