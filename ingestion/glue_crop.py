@@ -40,7 +40,7 @@ logger = logging.getLogger("CropYieldWeatherIngestionGlue")
 # NOTE: Do not hardcode real credentials. Populate KAGGLE_USERNAME / KAGGLE_KEY
 # via Glue job parameters, environment variables, or AWS Secrets Manager.
 DEFAULT_ARGS = {
-    'S3_BUCKET': 'agro-weather-data-lake-final',
+    'S3_BUCKET': 'agro-weather-data-lake-fi',
     'S3_PREFIX': 'crop',
     'DATASET_NAME': 'zoya77/indian-historical-crop-yield-and-weather-data',
     'KAGGLE_USERNAME': 'gawandek149',

@@ -72,7 +72,7 @@ logger = logging.getLogger("WeatherIngestionGlue")
 # KAGGLE_KEY via Glue job parameters, environment variables, or AWS Secrets
 # Manager instead. Placeholders below are intentionally blank.
 DEFAULT_ARGS = {
-    'S3_BUCKET': 'agro-weather-data-lake-final',
+    'S3_BUCKET': 'agro-weather-data-lake-fi',
     'S3_PREFIX': 'bronze',
     'DATASET_NAME': 'mukeshdevrath007/indian-5000-cities-weather-data',
     'CHUNK_SIZE': '100000',
