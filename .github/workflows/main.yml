@@ -1,7 +1,9 @@
 name: Medallion Data Pipeline (Ingest -> Bronze -> Silver -> Gold -> Crawler -> Athena)
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
     
 
 env:
