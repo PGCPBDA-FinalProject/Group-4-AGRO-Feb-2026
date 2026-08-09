@@ -354,12 +354,12 @@ aws glue start-crawler --name weather_gold_crawler
 
 | Team Member | Domain & Engineering Responsibilities |
 |-------------|────────────────────────────────────────|
-| **Shreyansh** | Project Architecture Lead · Silver-to-Gold Pipeline (`silver_to_gold_glue.py`) · Continuous Renewable Scoring Engine |
+| **Shreyansh** | Team Lead · Silver-to-Gold Transformation (`silver_to_gold_glue.py`) · Continuous Renewable Scoring Engine · Conclusion |
+| **Krishna** | System Architecture Lead · Bronze-to-Silver Transformation (`bronze_to_silver_glue.py`, `bronze_to_silver_emr.py` — Star Schema, GeoSpatial Engine & Stratified Sampling) |
 | **Parigha** | Data Ingestion Lead · Kaggle API Automation & EMR Bootstrap Orchestration (`kaggletos3zip.py`, `glue_weather.py`) |
-| **Krishna** | Bronze-to-Silver Transformation Lead · GeoSpatial Point-in-Polygon Engine & Stratified Sampling (`bronze_to_silver_glue.py`, `bronze_to_silver_emr.py`) |
-| **Swapnil** | Infrastructure as Code & Automation Lead · Terraform Modules & IAM Governance (`terraform/main.tf`) |
-| **Vaishnavi** | PS1 Agricultural Analytics Lead · PS1 Season Shift Dashboard & Athena View Layer (`athena/athena.sql`) |
-| **Vishal & Pravin** | PS2 Renewable Energy Analytics Lead · PS2 Viability Dashboard & Renewable Index Views (`dataVisualization/View.sql`) |
+| **Swapnil** | Automation Lead (Terraform IaC, GitHub CI/CD) · Data Ingestion Support |
+| **Vaishnavi** | Visualization Team · PS1 Agricultural Season Shift Dashboard & Athena View Layer (`athena/athena.sql`) |
+| **Vishal & Pravin** | Visualization Team · PS2 Renewable Energy Potential Dashboard & Athena Views (`dataVisualization/View.sql`) |
 
 ---
 
