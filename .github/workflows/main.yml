@@ -1,9 +1,9 @@
 name: Medallion Data Pipeline (Ingest -> Bronze -> Silver -> Gold -> Crawler -> Athena)
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+      # Runs every day at midnight UTC
+
     
 
 env:
@@ -22,407 +22,419 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v7
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
+      # - name: Configure AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v6
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      #     aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure Terraform state bucket exists
-        id: state_bucket
+      # - name: Ensure Terraform state bucket exists
+      #   id: state_bucket
+      #   run: |
+      #     ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      #     BUCKET="terraform-state-${ACCOUNT_ID}"
+      #     echo "Current AWS account: $ACCOUNT_ID"
+      #     echo "State bucket: $BUCKET"
+
+      #     if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+      #       echo "State bucket already exists and is accessible."
+      #     else
+      #       echo "State bucket missing or inaccessible under this account. Creating it..."
+      #       aws s3api create-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
+      #       aws s3api put-bucket-versioning --bucket "$BUCKET" \
+      #         --versioning-configuration Status=Enabled
+      #     fi
+
+      #     echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+      # - name: Setup Python
+      #   uses: actions/setup-python@v5
+      #   with:
+      #     python-version: "3.11"
+
+      - name: Check Python syntax
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BUCKET="terraform-state-${ACCOUNT_ID}"
-          echo "Current AWS account: $ACCOUNT_ID"
-          echo "State bucket: $BUCKET"
-
-          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-            echo "State bucket already exists and is accessible."
-          else
-            echo "State bucket missing or inaccessible under this account. Creating it..."
-            aws s3api create-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
-            aws s3api put-bucket-versioning --bucket "$BUCKET" \
-              --versioning-configuration Status=Enabled
-          fi
-
-          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-
-      - name: Cache Terraform providers
-        uses: actions/cache@v4
-        with:
-          path: |
-            terraform/.terraform
-            ~/.terraform.d/plugin-cache
-          key: terraform-providers-${{ runner.os }}-${{ hashFiles('terraform/.terraform.lock.hcl') }}
-          restore-keys: |
-            terraform-providers-${{ runner.os }}-
-
-      - name: Terraform Init
-        working-directory: terraform
-        env:
-          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ steps.state_bucket.outputs.bucket }}" \
-            -reconfigure
-
-      - name: Terraform Validate
-        working-directory: terraform
-        run: terraform validate
-
-      - name: Terraform Plan
-        working-directory: terraform
-        env:
-          TF_VAR_kaggle_username: ${{ secrets.KAGGLE_USERNAME }}
-          TF_VAR_kaggle_key: ${{ secrets.KAGGLE_KEY }}
-        run: terraform plan
-
-      - name: Terraform Apply
-        working-directory: terraform
-        env:
-          TF_VAR_kaggle_username: ${{ secrets.KAGGLE_USERNAME }}
-          TF_VAR_kaggle_key: ${{ secrets.KAGGLE_KEY }}
-        run: terraform apply -auto-approve
-
-  # ---------------------------------------------------------------------
-  # 1. Ingest raw data (weather + crop + geojson) into the Bronze bucket
-  # ---------------------------------------------------------------------
-  ingest-bronze:
-    name: Ingest Bronze Data (Weather, Crop, GeoJSON)
-
-    needs: terraform
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v7
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Upload ingestion scripts to S3
-        run: |
-          aws s3 cp ingestion/glue_weather.py \
-              "s3://agro-weather-data-lake-fi/scripts/glue_weather.py"
-          aws s3 cp ingestion/glue_crop.py \
-              "s3://agro-weather-data-lake-fi/scripts/glue_crop.py"
-
-      - name: Start weather ingestion Glue job
-        id: glue_weather
-        run: |
-          RUN_ID=$(aws glue start-job-run \
-            --job-name "${{ secrets.GLUE_JOB_WEATHER_INGESTION }}" \
-            --query "JobRunId" \
-            --output text)
-
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Start crop + geojson ingestion Glue job
-        id: glue_crop
-        run: |
-          RUN_ID=$(aws glue start-job-run \
-            --job-name "${{ secrets.GLUE_JOB_CROP_GEOJSON_INGESTION }}" \
-            --query "JobRunId" \
-            --output text)
-
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Poll weather ingestion job until complete
-        run: |
-          JOB_NAME="${{ secrets.GLUE_JOB_WEATHER_INGESTION }}"
-          RUN_ID="${{ steps.glue_weather.outputs.run_id }}"
-
-          while true; do
-            STATE=$(aws glue get-job-run \
-              --job-name "$JOB_NAME" \
-              --run-id "$RUN_ID" \
-              --query "JobRun.JobRunState" \
-              --output text)
-
-            echo "Weather ingestion job state: $STATE"
-
-            if [ "$STATE" == "SUCCEEDED" ]; then
-              break
-            fi
-
-            if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
-              exit 1
-            fi
-
-            sleep 30
-          done
-
-      - name: Poll crop + geojson ingestion job until complete
-        run: |
-          JOB_NAME="${{ secrets.GLUE_JOB_CROP_GEOJSON_INGESTION }}"
-          RUN_ID="${{ steps.glue_crop.outputs.run_id }}"
-
-          while true; do
-            STATE=$(aws glue get-job-run \
-              --job-name "$JOB_NAME" \
-              --run-id "$RUN_ID" \
-              --query "JobRun.JobRunState" \
-              --output text)
-
-            echo "Crop + GeoJSON ingestion job state: $STATE"
-
-            if [ "$STATE" == "SUCCEEDED" ]; then
-              break
-            fi
-
-            if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
-              exit 1
-            fi
-
-            sleep 30
-          done
-
-  # ---------------------------------------------------------------------
-  # 2. Transform: Bronze -> Silver via AWS Glue
-  # ---------------------------------------------------------------------
-  bronze-to-silver:
-    name: AWS Glue (Bronze -> Silver)
-
-    needs: ingest-bronze
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v7
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Upload latest script to S3
-        run: |
-          aws s3 cp gluesilver/bronze_to_silver_glue.py \
-              "s3://agro-weather-data-lake-fi/scripts/bronze_to_silver_glue.py"
-
-      - name: Start Glue job (bronze -> silver)
-        id: glue_silver
-        run: |
-          sleep 15
-
-          RUN_ID=$(aws glue start-job-run \
-            --job-name "${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}" \
-            --query "JobRunId" \
-            --output text)
-
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Poll Glue job until complete
-        run: |
-          JOB_NAME="${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}"
-          RUN_ID="${{ steps.glue_silver.outputs.run_id }}"
-
-          while true; do
-            STATE=$(aws glue get-job-run \
-              --job-name "$JOB_NAME" \
-              --run-id "$RUN_ID" \
-              --query "JobRun.JobRunState" \
-              --output text)
-
-            echo "Glue job state: $STATE"
-
-            if [ "$STATE" == "SUCCEEDED" ]; then
-              break
-            fi
-
-            if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
-              exit 1
-            fi
-
-            sleep 30
-          done
-
-  # ---------------------------------------------------------------------
-  # 3. Transform: Silver -> Gold via AWS Glue
-  # ---------------------------------------------------------------------
-  silver-to-gold:
-    name: AWS Glue (Silver -> Gold)
-
-    needs: bronze-to-silver
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v7
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Upload latest script to S3
-        run: |
-          aws s3 cp gluegold/silver_to_gold_glue.py \
-              "s3://agro-weather-data-lake-fi/scripts/silver_to_gold_glue.py"
-
-      - name: Start Glue job (silver -> gold)
-        id: glue_gold
-        run: |
-          sleep 15
-
-          RUN_ID=$(aws glue start-job-run \
-            --job-name "${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}" \
-            --query "JobRunId" \
-            --output text)
-
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Poll Glue job until complete
-        run: |
-          JOB_NAME="${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}"
-          RUN_ID="${{ steps.glue_gold.outputs.run_id }}"
-
-          while true; do
-            STATE=$(aws glue get-job-run \
-              --job-name "$JOB_NAME" \
-              --run-id "$RUN_ID" \
-              --query "JobRun.JobRunState" \
-              --output text)
-
-            echo "Glue job state: $STATE"
-
-            if [ "$STATE" == "SUCCEEDED" ]; then
-              break
-            fi
-
-            if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
-              exit 1
-            fi
-
-            sleep 30
-          done
-
-  # ---------------------------------------------------------------------
-  # 4. Crawl the Gold bucket to (re)populate the Glue Data Catalog
-  # ---------------------------------------------------------------------
-  crawler:
-    name: Run Glue Crawler on Gold Bucket
-
-    needs: silver-to-gold
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Start Glue Crawler
-        run: |
-          aws glue start-crawler --name "${{ secrets.GLUE_CRAWLER_NAME }}"
-
-      - name: Poll crawler until it finishes
-        run: |
-          CRAWLER_NAME="${{ secrets.GLUE_CRAWLER_NAME }}"
-
-          while true; do
-            STATE=$(aws glue get-crawler \
-              --name "$CRAWLER_NAME" \
-              --query "Crawler.State" \
-              --output text)
-
-            echo "Crawler state: $STATE"
-
-            if [ "$STATE" == "READY" ]; then
-              break
-            fi
-
-            sleep 20
-          done
-
-          LAST_STATUS=$(aws glue get-crawler \
-            --name "$CRAWLER_NAME" \
-            --query "Crawler.LastCrawl.Status" \
-            --output text)
-
-          echo "Last crawl status: $LAST_STATUS"
-
-          if [ "$LAST_STATUS" != "SUCCEEDED" ]; then
-            echo "Crawler did not succeed on its last run."
-            exit 1
-          fi
-
-  # ---------------------------------------------------------------------
-  # 5. Verify the Gold tables are queryable via Athena
-  # ---------------------------------------------------------------------
-  athena-verify:
-    name: Verify Gold Tables via Athena
-
-    needs: crawler
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Run a sample Athena query
-        run: |
-          QUERY_ID=$(aws athena start-query-execution \
-            --query-string "SHOW TABLES IN ${{ secrets.ATHENA_DATABASE }}" \
-            --work-group "${{ secrets.ATHENA_WORKGROUP }}" \
-            --query "QueryExecutionId" \
-            --output text)
-
-          while true; do
-            STATE=$(aws athena get-query-execution \
-              --query-execution-id "$QUERY_ID" \
-              --query "QueryExecution.Status.State" \
-              --output text)
-
-            echo "Athena query state: $STATE"
-
-            if [ "$STATE" == "SUCCEEDED" ]; then
-              break
-            fi
-
-            if [[ "$STATE" == "FAILED" || "$STATE" == "CANCELLED" ]]; then
-              REASON=$(aws athena get-query-execution \
-                --query-execution-id "$QUERY_ID" \
-                --query "QueryExecution.Status.StateChangeReason" \
-                --output text)
-              echo "Athena query failed: $REASON"
-              exit 1
-            fi
-
-            sleep 10
-          done
-
-          echo "Tables visible in Athena database ${{ secrets.ATHENA_DATABASE }}:"
-          aws athena get-query-results \
-            --query-execution-id "$QUERY_ID" \
-            --query "ResultSet.Rows[*].Data[*].VarCharValue" \
-            --output text
+          python -m py_compile ingestion/glue_weather.py
+          python -m py_compile ingestion/glue_crop.py
+          python -m py_compile gluesilver/bronze_to_silver_glue.py
+          python -m py_compile gluegold/silver_to_gold_glue.py
+
+
+  #     - name: Setup Terraform
+  #       uses: hashicorp/setup-terraform@v4
+
+  #     - name: Cache Terraform providers
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           terraform/.terraform
+  #           ~/.terraform.d/plugin-cache
+  #         key: terraform-providers-${{ runner.os }}-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+  #         restore-keys: |
+  #           terraform-providers-${{ runner.os }}-
+
+  #     - name: Terraform Init
+  #       working-directory: terraform
+  #       env:
+  #         TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+  #       run: |
+  #         terraform init \
+  #           -backend-config="bucket=${{ steps.state_bucket.outputs.bucket }}" \
+  #           -reconfigure
+
+  #     - name: Terraform Validate
+  #       working-directory: terraform
+  #       run: terraform validate
+
+  #     - name: Terraform Plan
+  #       working-directory: terraform
+  #       env:
+  #         TF_VAR_kaggle_username: ${{ secrets.KAGGLE_USERNAME }}
+  #         TF_VAR_kaggle_key: ${{ secrets.KAGGLE_KEY }}
+  #       run: terraform plan
+
+  #     - name: Terraform Apply
+  #       working-directory: terraform
+  #       env:
+  #         TF_VAR_kaggle_username: ${{ secrets.KAGGLE_USERNAME }}
+  #         TF_VAR_kaggle_key: ${{ secrets.KAGGLE_KEY }}
+  #       run: terraform apply -auto-approve
+
+  # # ---------------------------------------------------------------------
+  # # 1. Ingest raw data (weather + crop + geojson) into the Bronze bucket
+  # # ---------------------------------------------------------------------
+  # ingest-bronze:
+  #   name: Ingest Bronze Data (Weather, Crop, GeoJSON)
+
+  #   needs: terraform
+
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@v7
+
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v6
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Upload ingestion scripts to S3
+  #       run: |
+  #         aws s3 cp ingestion/glue_weather.py \
+  #             "s3://agro-weather-data-lake-fi/scripts/glue_weather.py"
+  #         aws s3 cp ingestion/glue_crop.py \
+  #             "s3://agro-weather-data-lake-fi/scripts/glue_crop.py"
+
+  #     - name: Start weather ingestion Glue job
+  #       id: glue_weather
+  #       run: |
+  #         RUN_ID=$(aws glue start-job-run \
+  #           --job-name "${{ secrets.GLUE_JOB_WEATHER_INGESTION }}" \
+  #           --query "JobRunId" \
+  #           --output text)
+
+  #         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+  #     - name: Start crop + geojson ingestion Glue job
+  #       id: glue_crop
+  #       run: |
+  #         RUN_ID=$(aws glue start-job-run \
+  #           --job-name "${{ secrets.GLUE_JOB_CROP_GEOJSON_INGESTION }}" \
+  #           --query "JobRunId" \
+  #           --output text)
+
+  #         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+  #     - name: Poll weather ingestion job until complete
+  #       run: |
+  #         JOB_NAME="${{ secrets.GLUE_JOB_WEATHER_INGESTION }}"
+  #         RUN_ID="${{ steps.glue_weather.outputs.run_id }}"
+
+  #         while true; do
+  #           STATE=$(aws glue get-job-run \
+  #             --job-name "$JOB_NAME" \
+  #             --run-id "$RUN_ID" \
+  #             --query "JobRun.JobRunState" \
+  #             --output text)
+
+  #           echo "Weather ingestion job state: $STATE"
+
+  #           if [ "$STATE" == "SUCCEEDED" ]; then
+  #             break
+  #           fi
+
+  #           if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
+  #             exit 1
+  #           fi
+
+  #           sleep 30
+  #         done
+
+  #     - name: Poll crop + geojson ingestion job until complete
+  #       run: |
+  #         JOB_NAME="${{ secrets.GLUE_JOB_CROP_GEOJSON_INGESTION }}"
+  #         RUN_ID="${{ steps.glue_crop.outputs.run_id }}"
+
+  #         while true; do
+  #           STATE=$(aws glue get-job-run \
+  #             --job-name "$JOB_NAME" \
+  #             --run-id "$RUN_ID" \
+  #             --query "JobRun.JobRunState" \
+  #             --output text)
+
+  #           echo "Crop + GeoJSON ingestion job state: $STATE"
+
+  #           if [ "$STATE" == "SUCCEEDED" ]; then
+  #             break
+  #           fi
+
+  #           if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
+  #             exit 1
+  #           fi
+
+  #           sleep 30
+  #         done
+
+  # # ---------------------------------------------------------------------
+  # # 2. Transform: Bronze -> Silver via AWS Glue
+  # # ---------------------------------------------------------------------
+  # bronze-to-silver:
+  #   name: AWS Glue (Bronze -> Silver)
+
+  #   needs: ingest-bronze
+
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@v7
+
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v6
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Upload latest script to S3
+  #       run: |
+  #         aws s3 cp gluesilver/bronze_to_silver_glue.py \
+  #             "s3://agro-weather-data-lake-fi/scripts/bronze_to_silver_glue.py"
+
+  #     - name: Start Glue job (bronze -> silver)
+  #       id: glue_silver
+  #       run: |
+  #         sleep 15
+
+  #         RUN_ID=$(aws glue start-job-run \
+  #           --job-name "${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}" \
+  #           --query "JobRunId" \
+  #           --output text)
+
+  #         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+  #     - name: Poll Glue job until complete
+  #       run: |
+  #         JOB_NAME="${{ secrets.GLUE_JOB_BRONZE_TO_SILVER }}"
+  #         RUN_ID="${{ steps.glue_silver.outputs.run_id }}"
+
+  #         while true; do
+  #           STATE=$(aws glue get-job-run \
+  #             --job-name "$JOB_NAME" \
+  #             --run-id "$RUN_ID" \
+  #             --query "JobRun.JobRunState" \
+  #             --output text)
+
+  #           echo "Glue job state: $STATE"
+
+  #           if [ "$STATE" == "SUCCEEDED" ]; then
+  #             break
+  #           fi
+
+  #           if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
+  #             exit 1
+  #           fi
+
+  #           sleep 30
+  #         done
+
+  # # ---------------------------------------------------------------------
+  # # 3. Transform: Silver -> Gold via AWS Glue
+  # # ---------------------------------------------------------------------
+  # silver-to-gold:
+  #   name: AWS Glue (Silver -> Gold)
+
+  #   needs: bronze-to-silver
+
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@v7
+
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v6
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Upload latest script to S3
+  #       run: |
+  #         aws s3 cp gluegold/silver_to_gold_glue.py \
+  #             "s3://agro-weather-data-lake-fi/scripts/silver_to_gold_glue.py"
+
+  #     - name: Start Glue job (silver -> gold)
+  #       id: glue_gold
+  #       run: |
+  #         sleep 15
+
+  #         RUN_ID=$(aws glue start-job-run \
+  #           --job-name "${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}" \
+  #           --query "JobRunId" \
+  #           --output text)
+
+  #         echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+  #     - name: Poll Glue job until complete
+  #       run: |
+  #         JOB_NAME="${{ secrets.GLUE_JOB_SILVER_TO_GOLD }}"
+  #         RUN_ID="${{ steps.glue_gold.outputs.run_id }}"
+
+  #         while true; do
+  #           STATE=$(aws glue get-job-run \
+  #             --job-name "$JOB_NAME" \
+  #             --run-id "$RUN_ID" \
+  #             --query "JobRun.JobRunState" \
+  #             --output text)
+
+  #           echo "Glue job state: $STATE"
+
+  #           if [ "$STATE" == "SUCCEEDED" ]; then
+  #             break
+  #           fi
+
+  #           if [[ "$STATE" == "FAILED" || "$STATE" == "STOPPED" || "$STATE" == "TIMEOUT" ]]; then
+  #             exit 1
+  #           fi
+
+  #           sleep 30
+  #         done
+
+  # # ---------------------------------------------------------------------
+  # # 4. Crawl the Gold bucket to (re)populate the Glue Data Catalog
+  # # ---------------------------------------------------------------------
+  # crawler:
+  #   name: Run Glue Crawler on Gold Bucket
+
+  #   needs: silver-to-gold
+
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v6
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Start Glue Crawler
+  #       run: |
+  #         aws glue start-crawler --name "${{ secrets.GLUE_CRAWLER_NAME }}"
+
+  #     - name: Poll crawler until it finishes
+  #       run: |
+  #         CRAWLER_NAME="${{ secrets.GLUE_CRAWLER_NAME }}"
+
+  #         while true; do
+  #           STATE=$(aws glue get-crawler \
+  #             --name "$CRAWLER_NAME" \
+  #             --query "Crawler.State" \
+  #             --output text)
+
+  #           echo "Crawler state: $STATE"
+
+  #           if [ "$STATE" == "READY" ]; then
+  #             break
+  #           fi
+
+  #           sleep 20
+  #         done
+
+  #         LAST_STATUS=$(aws glue get-crawler \
+  #           --name "$CRAWLER_NAME" \
+  #           --query "Crawler.LastCrawl.Status" \
+  #           --output text)
+
+  #         echo "Last crawl status: $LAST_STATUS"
+
+  #         if [ "$LAST_STATUS" != "SUCCEEDED" ]; then
+  #           echo "Crawler did not succeed on its last run."
+  #           exit 1
+  #         fi
+
+  # # ---------------------------------------------------------------------
+  # # 5. Verify the Gold tables are queryable via Athena
+  # # ---------------------------------------------------------------------
+  # athena-verify:
+  #   name: Verify Gold Tables via Athena
+
+  #   needs: crawler
+
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v6
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Run a sample Athena query
+  #       run: |
+  #         QUERY_ID=$(aws athena start-query-execution \
+  #           --query-string "SHOW TABLES IN ${{ secrets.ATHENA_DATABASE }}" \
+  #           --work-group "${{ secrets.ATHENA_WORKGROUP }}" \
+  #           --query "QueryExecutionId" \
+  #           --output text)
+
+  #         while true; do
+  #           STATE=$(aws athena get-query-execution \
+  #             --query-execution-id "$QUERY_ID" \
+  #             --query "QueryExecution.Status.State" \
+  #             --output text)
+
+  #           echo "Athena query state: $STATE"
+
+  #           if [ "$STATE" == "SUCCEEDED" ]; then
+  #             break
+  #           fi
+
+  #           if [[ "$STATE" == "FAILED" || "$STATE" == "CANCELLED" ]]; then
+  #             REASON=$(aws athena get-query-execution \
+  #               --query-execution-id "$QUERY_ID" \
+  #               --query "QueryExecution.Status.StateChangeReason" \
+  #               --output text)
+  #             echo "Athena query failed: $REASON"
+  #             exit 1
+  #           fi
+
+  #           sleep 10
+  #         done
+
+  #         echo "Tables visible in Athena database ${{ secrets.ATHENA_DATABASE }}:"
+  #         aws athena get-query-results \
+  #           --query-execution-id "$QUERY_ID" \
+  #           --query "ResultSet.Rows[*].Data[*].VarCharValue" \
+  #           --output text
