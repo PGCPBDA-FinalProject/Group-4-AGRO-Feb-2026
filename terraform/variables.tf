@@ -3,23 +3,23 @@ variable "region" {
 }
 
 variable "glue_role_arn" {
-  default = "arn:aws:iam::533267437108:role/LabRole"
+  default = "arn:aws:iam::654654400554:role/LabRole"
 }
 
 variable "bronze_bucket" {
-  default = "agro-weather-data-lake"
+  default = "agro-weather-data-lake-fi"
 }
 
 variable "silver_bucket" {
-  default = "agro-weather-data-lake-silver3"
+  default = "agro-weather-data-lake-silver3-fi"
 }
 
 variable "gold_bucket" {
-  default = "agro-weather-data-lake-gold3"
+  default = "agro-weather-data-lake-gold3-fi"
 }
 
 variable "glue_assets_bucket" {
-  default = "aws-glue-assets-381492026114-us-east-1"
+  default = "aws-glue-assets-654654400554-us-east-1"
 }
 
 #declare a glue job name
@@ -33,7 +33,7 @@ variable "glue_crawler_name" {
 }
 #declare athena results bucket
 variable "athena_results_bucket" {
-  default = "agro-weather-data-lake-athena-results3"
+  default = "agro-weather-data-lake-athena-results-fi"
 }
 
 #declare athena workgroup name

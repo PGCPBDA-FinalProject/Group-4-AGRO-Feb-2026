@@ -2,6 +2,8 @@ name: Medallion Data Pipeline (Ingest -> Bronze -> Silver -> Gold -> Crawler -> 
 
 on:
   workflow_dispatch:
+      # Runs every day at midnight UTC
+
     
 
 env:
@@ -28,12 +30,43 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+      - name: Ensure Terraform state bucket exists
+        id: state_bucket
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="terraform-state-${ACCOUNT_ID}"
+          echo "Current AWS account: $ACCOUNT_ID"
+          echo "State bucket: $BUCKET"
+
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "State bucket already exists and is accessible."
+          else
+            echo "State bucket missing or inaccessible under this account. Creating it..."
+            aws s3api create-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
+            aws s3api put-bucket-versioning --bucket "$BUCKET" \
+              --versioning-configuration Status=Enabled
+          fi
+
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile ingestion/glue_weather.py
+          python -m py_compile ingestion/glue_crop.py
+          python -m py_compile gluesilver/bronze_to_silver_glue.py
+          python -m py_compile gluegold/silver_to_gold_glue.py
+
 
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init
+        run: |
+          terraform init \
+          -backend-config="bucket=${{ steps.state_bucket.outputs.bucket }}" \
+          -reconfigure
 
       - name: Terraform Validate
         working-directory: terraform
@@ -77,10 +110,10 @@ jobs:
 
       - name: Upload ingestion scripts to S3
         run: |
-          aws s3 cp glue/glue_weather.py \
-              "s3://agro-weather-data-lake/scripts/glue_weather.py"
-          aws s3 cp glue/glue_crop.py \
-              "s3://agro-weather-data-lake/scripts/glue_crop.py"
+          aws s3 cp ingestion/glue_weather.py \
+              "s3://agro-weather-data-lake-fi/scripts/glue_weather.py"
+          aws s3 cp ingestion/glue_crop.py \
+              "s3://agro-weather-data-lake-fi/scripts/glue_crop.py"
 
       - name: Start weather ingestion Glue job
         id: glue_weather
@@ -177,7 +210,7 @@ jobs:
       - name: Upload latest script to S3
         run: |
           aws s3 cp gluesilver/bronze_to_silver_glue.py \
-              "s3://agro-weather-data-lake/scripts/bronze_to_silver_glue.py"
+              "s3://agro-weather-data-lake-fi/scripts/bronze_to_silver_glue.py"
 
       - name: Start Glue job (bronze -> silver)
         id: glue_silver
@@ -241,7 +274,7 @@ jobs:
       - name: Upload latest script to S3
         run: |
           aws s3 cp gluegold/silver_to_gold_glue.py \
-              "s3://agro-weather-data-lake/scripts/silver_to_gold_glue.py"
+              "s3://agro-weather-data-lake-fi/scripts/silver_to_gold_glue.py"
 
       - name: Start Glue job (silver -> gold)
         id: glue_gold
