@@ -57,7 +57,7 @@ The dataset contains historical weather observations collected across thousands 
 # Architecture
 
 <p align="center">
-  <img src="Architecture.jpeg" width="900" alt="Project Architecture"/>
+  <img src="ARCHITECTURE.png" width="900" alt="Project Architecture"/>
 </p>
 
 ### Data Pipeline
