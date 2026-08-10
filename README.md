@@ -73,9 +73,10 @@ The platform addresses two primary domain challenges:
                                   │
                                   ▼
  ┌─────────────────────────────────────────────────────────────────────────────────┐
- │ AWS GLUE ETL / EMR (PySpark) — Bronze → Silver Transformation                  │
- │ • Point-in-polygon geospatial enrichment (City → District → State → Region)     │
- │ • Deterministic surrogate key generation (city_id, state_id, region_id)         │
+ │ AWS GLUE ETL / EMR (PySpark) — Bronze → Silver Transformation                   │
+ │ • Geospatial enrichment (City → District → State → Region)                      │
+ │ • Dimension and fact tables where fact tables partitioned by state for          │
+ │   better lookup.                                                               │
  │ • Early predicate pushdown stratified sampling (30% per state, min 15 cities)   │
  └────────────────────────────────┬────────────────────────────────────────────────┘
                                   │
