@@ -26,10 +26,10 @@ logger = logging.getLogger("BronzeToSilverGlueJob")
 # 1. PARAMETER & ENVIRONMENT INITIALIZATION
 DEFAULT_ARGS = {
     'JOB_NAME': 'bronze_to_silver_transformation',
-    'BRONZE_BUCKET': 's3://agro-weather-data-lake',
-    'SILVER_BUCKET': 's3://agro-weather-data-lake2/silver',
-    'CROP_DATA_INPUT_PATH': 's3://agro-weather-data-lake/crop/Custom_Crops_yield_Historical_Dataset.csv',
-    'CROP_DATA_OUTPUT_PATH': 's3://agro-weather-data-lake2/silver/crop_data',
+    'BRONZE_BUCKET': 's3://krishna-agro-bronze',
+    'SILVER_BUCKET': 's3://krishna-agro-silver',
+    'CROP_DATA_INPUT_PATH': 's3://krishna-agro-bronze/crop/crop_yield.csv',
+    'CROP_DATA_OUTPUT_PATH': 's3://krishna-agro-silver/crop_data',
     'PERCENTAGE': '0.30',
     'MIN_CITIES': '15',
     'SEED': '42'
@@ -321,12 +321,16 @@ logger.info("Step 3: Building fact_weather_sampled via early predicate pushdown 
 
 weather_path_sets = []
 for base in BRONZE_BASES:
+    weather_path_sets.append([f"{base}/weather/w_d_1/", f"{base}/weather/w_d_2/", f"{base}/weather/w_d_3/"])
+    weather_path_sets.append([f"{base}/weather/w_d_1/"])
     weather_path_sets.append([f"{base}/w_d_1/", f"{base}/w_d_2/", f"{base}/w_d_3/"])
     weather_path_sets.append([f"{base}/w_d_1/"])
-    weather_path_sets.append([f"{base}/weather/"])
-    weather_path_sets.append([f"{base}/weather"])
+    weather_path_sets.append([f"{base}/weather/wd1/", f"{base}/weather/wd2/", f"{base}/weather/wd3/"])
+    weather_path_sets.append([f"{base}/weather/wd1/"])
     weather_path_sets.append([f"{base}/wd1/", f"{base}/wd2/", f"{base}/wd3/"])
     weather_path_sets.append([f"{base}/wd1/"])
+    weather_path_sets.append([f"{base}/weather/"])
+    weather_path_sets.append([f"{base}/weather"])
 
 raw_weather_df = None
 for w_paths in weather_path_sets:
@@ -394,9 +398,10 @@ try:
     crop_candidate_paths = [CROP_DATA_INPUT_PATH]
     for base in BRONZE_BASES:
         crop_candidate_paths.extend([
+            f"{base}/crop/crop_yield.csv",
+            f"{base}/crop/Crop_recommendation.csv",
             f"{base}/crop/Custom_Crops_yield_Historical_Dataset.csv",
-            f"{base}/crop_data/Custom_Crops_yield_Historical_Dataset.csv",
-            f"{base}/bronze/crop/Custom_Crops_yield_Historical_Dataset.csv",
+            f"{base}/crop_data/crop_yield.csv",
             f"{base}/crop_data",
             f"{base}/crop",
             f"{base}/crop/Custom_Crops_yield_Historical_Dataset.parquet"
@@ -427,9 +432,80 @@ try:
         clean_cols = [col.strip().lower().replace(" ", "_").replace("-", "_") for col in raw_crop_df.columns]
         crop_df_clean = raw_crop_df.toDF(*clean_cols)
         
+        # Enforce column standardization for 55-crop dataset (Annual_Rainfall -> rainfall_mm, Yield -> yield_kg_per_ha)
+        if "annual_rainfall" in crop_df_clean.columns and "rainfall_mm" not in crop_df_clean.columns:
+            crop_df_clean = crop_df_clean.withColumnRenamed("annual_rainfall", "rainfall_mm")
+        if "yield" in crop_df_clean.columns and "yield_kg_per_ha" not in crop_df_clean.columns:
+            crop_df_clean = crop_df_clean.withColumnRenamed("yield", "yield_kg_per_ha")
+
+        # Feature Enrichment: Compute Weather (Temperature, Relative Humidity) & State Soil pH
+        logger.info("Enriching 55-crop dataset with Weather (Temperature, Relative Humidity) and State Soil pH...")
+        try:
+            state_col = "state" if "state" in crop_df_clean.columns else ("state_name" if "state_name" in crop_df_clean.columns else None)
+            
+            # 1. Weather Enrichment (if missing or partially missing)
+            if state_col and fact_weather is not None and ("temperature_c" not in crop_df_clean.columns or "humidity_%" not in crop_df_clean.columns):
+                weather_state_avg = (
+                    fact_weather
+                    .join(dim_city, "city_id")
+                    .join(dim_state, "state_id")
+                    .groupBy(F.lower(F.trim(F.col("state_name"))).alias("state_clean"))
+                    .agg(
+                        F.avg("temperature_2m").alias("temperature_c_avg"),
+                        F.avg("relative_humidity_2m").alias("humidity_%_avg")
+                    )
+                )
+                
+                crop_df_clean = crop_df_clean.withColumn("state_clean", F.lower(F.trim(F.col(state_col))))
+                crop_df_clean = crop_df_clean.join(weather_state_avg, "state_clean", "left").drop("state_clean")
+
+                if "temperature_c" not in crop_df_clean.columns:
+                    crop_df_clean = crop_df_clean.withColumn("temperature_c", F.coalesce(F.col("temperature_c_avg"), F.lit(25.0)))
+                else:
+                    crop_df_clean = crop_df_clean.withColumn("temperature_c", F.coalesce(F.col("temperature_c"), F.col("temperature_c_avg"), F.lit(25.0)))
+
+                if "humidity_%" not in crop_df_clean.columns:
+                    crop_df_clean = crop_df_clean.withColumn("humidity_%", F.coalesce(F.col("humidity_%_avg"), F.lit(65.0)))
+                else:
+                    crop_df_clean = crop_df_clean.withColumn("humidity_%", F.coalesce(F.col("humidity_%"), F.col("humidity_%_avg"), F.lit(65.0)))
+
+                crop_df_clean = crop_df_clean.drop("temperature_c_avg", "humidity_%_avg")
+
+            # 2. Comprehensive ICAR Soil pH Mapping across all 34 States & UTs
+            if state_col:
+                ph_expr = (
+                    F.when(F.col(state_col).isin(["Maharashtra", "Madhya Pradesh", "Gujarat", "Andhra Pradesh", "Telangana"]), 7.4)
+                    .when(F.col(state_col).isin(["Punjab", "Haryana", "Uttar Pradesh", "Bihar", "Delhi", "Chandigarh", "Puducherry"]), 6.8)
+                    .when(F.col(state_col).isin(["Rajasthan"]), 8.1)
+                    .when(F.col(state_col).isin(["Chhattisgarh", "Jharkhand", "West Bengal", "Tamil Nadu"]), 6.3)
+                    .when(F.col(state_col).isin([
+                        "Kerala", "Assam", "Odisha", "Orissa", "Karnataka", "Himachal Pradesh", "Uttarakhand", "Uttaranchal",
+                        "Jammu & Kashmir", "Jammu and Kashmir", "Ladakh", "Sikkim", "Arunachal Pradesh", "Manipur",
+                        "Meghalaya", "Mizoram", "Nagaland", "Tripura", "Goa", "Dadra and Nagar Haveli and Daman and Diu",
+                        "Dadra and Nagar Haveli", "Daman and Diu", "Andaman & Nicobar", "Andaman and Nicobar", "Lakshadweep"
+                    ]), 5.8)
+                    .otherwise(6.8)
+                )
+
+                if "ph" not in crop_df_clean.columns:
+                    crop_df_clean = crop_df_clean.withColumn("ph", ph_expr)
+                else:
+                    crop_df_clean = crop_df_clean.withColumn("ph", F.coalesce(F.col("ph"), ph_expr))
+            elif "ph" not in crop_df_clean.columns:
+                crop_df_clean = crop_df_clean.withColumn("ph", F.lit(6.8))
+
+        except Exception as enrich_err:
+            logger.warning(f"Weather/Soil enrichment notice ({enrich_err}). Using default fallback columns.")
+            if "temperature_c" not in crop_df_clean.columns:
+                crop_df_clean = crop_df_clean.withColumn("temperature_c", F.lit(25.0))
+            if "humidity_%" not in crop_df_clean.columns:
+                crop_df_clean = crop_df_clean.withColumn("humidity_%", F.lit(65.0))
+            if "ph" not in crop_df_clean.columns:
+                crop_df_clean = crop_df_clean.withColumn("ph", F.lit(6.8))
+
         # Write clean Parquet dataset to Silver S3 target
         crop_df_clean.coalesce(1).write.mode("overwrite").parquet(CROP_DATA_OUTPUT_PATH)
-        logger.info(f"SUCCESS: Wrote Crop Data ({crop_df_clean.count()} rows, {len(clean_cols)} cols) Parquet dataset -> {CROP_DATA_OUTPUT_PATH}")
+        logger.info(f"SUCCESS: Wrote Enriched Crop Data ({crop_df_clean.count()} rows, {len(crop_df_clean.columns)} cols) Parquet dataset -> {CROP_DATA_OUTPUT_PATH}")
     else:
         logger.error(f"CRITICAL: Crop Data processing skipped (could not read from candidate paths in {BRONZE_BUCKET})")
 except Exception as crop_err:
