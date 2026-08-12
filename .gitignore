@@ -4,6 +4,14 @@ tempdata/
 .vscode/
 __pycache__/
 *.pyc
+venv/
 bronze to silver.md
 emr/__pycache__/
 gluesilver/__pycache__/
+mldata/__pycache__/
+mldata/
+
+# Generated Artifacts & Caches (Re-creatable via scripts)
+rag_app/chroma_db/
+rag_app/cache/
+ml/models/
